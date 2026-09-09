@@ -264,6 +264,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   btnLeaveRoom.addEventListener('click', () => {
+    if (socket && socket.connected) {
+      socket.emit('leave-room');
+    }
     webrtcManager.disconnectAll();
     localStorage.removeItem('airshare_current_room');
     currentRoomId = '';
@@ -273,6 +276,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     peers = [];
     updatePeersUI([]);
     updateRoomStateUI(false);
+
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.pushState({}, '', cleanUrl);
+
     showToast('Left room and disconnected.');
   });
 
@@ -495,7 +502,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
 
-    const CHUNK_SIZE = 64 * 1024;
+    const CHUNK_SIZE = 256 * 1024; // 256KB chunk size for high-speed streaming
     let offset = 0;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     let chunkIndex = 0;
@@ -537,7 +544,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         channel: 'Relayed Stream'
       });
 
-      await new Promise(r => setTimeout(r, 8));
+      if (chunkIndex % 5 === 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
     }
 
     socket.emit('relay-file-complete', { targetSocketId, fileId: transferId });
@@ -954,14 +963,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   function checkUrlParamsAndJoinRoom() {
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
-    const savedRoom = localStorage.getItem('airshare_current_room');
 
     if (roomParam && roomParam.length === 6) {
       joinRoom(roomParam);
-    } else if (savedRoom && savedRoom.length === 6) {
-      joinRoom(savedRoom);
     } else {
-      btnCreateRoom.click();
+      // Start in clean Unjoined State unless explicit room URL parameter is passed
+      updateRoomStateUI(false);
     }
   }
 

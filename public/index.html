@@ -43,7 +43,7 @@
           <i data-lucide="wifi"></i>
           <span id="networkIpText">Detecting Network...</span>
         </div>
-        <button class="btn btn-secondary btn-icon-only" id="btnShowQr" title="Scan QR Code to Connect Phone">
+        <button class="btn btn-secondary btn-icon-only" id="btnShowQr" style="display: none;" title="Scan QR Code to Connect Phone">
           <i data-lucide="qr-code"></i>
         </button>
       </div>
@@ -58,7 +58,7 @@
             <span class="section-subtitle">CURRENT ROOM</span>
             <div class="room-code-display">
               <span id="currentRoomCode">------</span>
-              <span class="status-indicator online" id="connectionStatusDot"></span>
+              <span class="status-indicator" id="connectionStatusDot"></span>
             </div>
           </div>
           <div class="room-controls">
@@ -74,10 +74,10 @@
             <button class="btn btn-outline" id="btnCreateRoom" title="Create a new room code">
               <i data-lucide="plus-circle"></i> New Code
             </button>
-            <button class="btn btn-outline" id="btnCopyLink" title="Copy Direct Invite Link">
+            <button class="btn btn-outline" id="btnCopyLink" style="display: none;" title="Copy Direct Invite Link">
               <i data-lucide="copy"></i> Copy Link
             </button>
-            <button class="btn btn-outline btn-danger" id="btnLeaveRoom" title="Leave Current Room">
+            <button class="btn btn-outline btn-danger" id="btnLeaveRoom" style="display: none;" title="Leave Current Room">
               <i data-lucide="log-out"></i> Leave
             </button>
           </div>

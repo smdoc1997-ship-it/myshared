@@ -180,6 +180,21 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('leave-room', () => {
+    if (currentRoom && rooms.has(currentRoom)) {
+      rooms.get(currentRoom).delete(socket.id);
+      if (rooms.get(currentRoom).size === 0) {
+        rooms.delete(currentRoom);
+      } else {
+        io.to(currentRoom).emit('peer-left', { socketId: socket.id });
+        io.to(currentRoom).emit('room-peers', Array.from(rooms.get(currentRoom).values()));
+      }
+      socket.leave(currentRoom);
+      console.log(`[LEAVE] Socket ${socket.id} left room ${currentRoom}`);
+      currentRoom = null;
+    }
+  });
+
   // Disconnect handling
   socket.on('disconnect', () => {
     if (currentRoom && rooms.has(currentRoom)) {

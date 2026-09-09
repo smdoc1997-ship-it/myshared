@@ -434,9 +434,12 @@ class WebRTCManager {
 
   async sendFileP2P(targetSocketId, file, transferId) {
     const dataChannel = await this.connectToPeer(targetSocketId);
-    if (!dataChannel || (dataChannel.readyState && dataChannel.readyState !== 'open' && !dataChannel.send)) {
+    if (!dataChannel) {
       return false;
     }
+
+    // Extract raw RTCDataChannel underlying PeerJS wrapper if present
+    const rawChannel = dataChannel._channel || dataChannel.dataChannel || dataChannel;
 
     this.activeOutgoingTransfers.set(transferId, { cancelled: false });
 
@@ -448,12 +451,27 @@ class WebRTCManager {
       mimeType: file.type || 'application/octet-stream'
     });
 
-    dataChannel.send(headerMsg);
+    try {
+      if (dataChannel.send) dataChannel.send(headerMsg);
+      else if (rawChannel.send) rawChannel.send(headerMsg);
+    } catch (e) {
+      console.warn('Failed to send file header:', e);
+      return false;
+    }
 
-    const CHUNK_SIZE = 64 * 1024;
+    const CHUNK_SIZE = 256 * 1024; // 256KB high-speed streaming chunk size
+    const HIGH_WATERMARK = 4 * 1024 * 1024; // 4MB buffer high watermark
+    const LOW_WATERMARK = 2 * 1024 * 1024; // 2MB buffer low watermark
+
+    if (rawChannel && rawChannel.bufferedAmountLowThreshold !== undefined) {
+      try {
+        rawChannel.bufferedAmountLowThreshold = LOW_WATERMARK;
+      } catch (e) {}
+    }
+
     const encoder = new TextEncoder();
     const paddedId = transferId.padEnd(36, ' ');
-    const idHeaderBytes = encoder.encode(paddedId);
+    const idHeaderBytes = encoder.encode(paddedId); // 36 bytes fixed
 
     let offset = 0;
     const startTime = Date.now();
@@ -461,14 +479,23 @@ class WebRTCManager {
     while (offset < file.size) {
       const state = this.activeOutgoingTransfers.get(transferId);
       if (!state || state.cancelled) {
-        dataChannel.send(JSON.stringify({ type: 'file-cancel', transferId }));
+        const cancelMsg = JSON.stringify({ type: 'file-cancel', transferId });
+        if (dataChannel.send) dataChannel.send(cancelMsg);
+        else if (rawChannel.send) rawChannel.send(cancelMsg);
         return true;
       }
 
-      if (dataChannel.bufferedAmount && dataChannel.bufferedAmount > dataChannel.bufferedAmountLowThreshold) {
+      // Backpressure control for maximum throughput without overflow
+      if (rawChannel && typeof rawChannel.bufferedAmount === 'number' && rawChannel.bufferedAmount > HIGH_WATERMARK) {
         await new Promise((resolve) => {
-          dataChannel.onbufferedamountlow = () => {
-            dataChannel.onbufferedamountlow = null;
+          const timeout = setTimeout(() => {
+            if (rawChannel) rawChannel.onbufferedamountlow = null;
+            resolve();
+          }, 150);
+
+          rawChannel.onbufferedamountlow = () => {
+            clearTimeout(timeout);
+            rawChannel.onbufferedamountlow = null;
             resolve();
           };
         });
@@ -477,11 +504,20 @@ class WebRTCManager {
       const slice = file.slice(offset, offset + CHUNK_SIZE);
       const chunkBuffer = await slice.arrayBuffer();
 
-      const combinedBuffer = new Uint8Array(idHeaderBytes.length + chunkBuffer.byteLength);
+      const combinedBuffer = new Uint8Array(36 + chunkBuffer.byteLength);
       combinedBuffer.set(idHeaderBytes, 0);
-      combinedBuffer.set(new Uint8Array(chunkBuffer), idHeaderBytes.length);
+      combinedBuffer.set(new Uint8Array(chunkBuffer), 36);
 
-      dataChannel.send(combinedBuffer.buffer);
+      try {
+        if (dataChannel.send) {
+          dataChannel.send(combinedBuffer.buffer);
+        } else if (rawChannel.send) {
+          rawChannel.send(combinedBuffer.buffer);
+        }
+      } catch (err) {
+        console.warn('DataChannel send error, backing off:', err);
+        await new Promise(r => setTimeout(r, 20));
+      }
 
       offset += chunkBuffer.byteLength;
 
