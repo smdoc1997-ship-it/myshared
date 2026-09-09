@@ -3,8 +3,15 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Initialize Lucide icons
-  lucide.createIcons();
+  // Helper to safely call lucide.createIcons without throwing ReferenceError if CDN is delayed
+  function safeCreateIcons() {
+    if (typeof lucide !== 'undefined' && lucide && lucide.createIcons) {
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  }
+
+  // Initialize Lucide icons safely
+  safeCreateIcons();
 
   // Socket.io connection (Optional on Vercel serverless)
   let socket = null;
@@ -226,71 +233,90 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // UI Event Listeners
-  btnJoinRoom.addEventListener('click', () => {
-    const code = roomCodeInput.value.trim();
-    if (code.length === 6) {
-      joinRoom(code);
-    } else {
-      alert('Please enter a valid 6-digit room code.');
-    }
-  });
+  // UI Event Listeners with Bulletproof Null Guarding
+  if (btnJoinRoom) {
+    btnJoinRoom.addEventListener('click', () => {
+      const code = roomCodeInput ? roomCodeInput.value.trim() : '';
+      if (code.length === 6) {
+        joinRoom(code);
+      } else {
+        alert('Please enter a valid 6-digit room code.');
+      }
+    });
+  }
 
-  roomCodeInput.addEventListener('keyup', (e) => {
-    if (e.key === 'Enter') {
-      btnJoinRoom.click();
-    }
-  });
+  if (roomCodeInput) {
+    roomCodeInput.addEventListener('keyup', (e) => {
+      if (e.key === 'Enter' && btnJoinRoom) {
+        btnJoinRoom.click();
+      }
+    });
+  }
 
-  btnCreateRoom.addEventListener('click', () => {
-    // Generate 6-digit room code instantly
-    const localCode = Math.floor(100000 + Math.random() * 900000).toString();
-    joinRoom(localCode);
-  });
+  if (btnCreateRoom) {
+    btnCreateRoom.addEventListener('click', () => {
+      const localCode = Math.floor(100000 + Math.random() * 900000).toString();
+      joinRoom(localCode);
+    });
+  }
 
-  btnCopyLink.addEventListener('click', () => {
-    const shareUrl = `${window.location.origin}?room=${currentRoomId}`;
-    navigator.clipboard.writeText(shareUrl);
-    showToast('Direct invite link copied to clipboard!');
-  });
+  if (btnCopyLink) {
+    btnCopyLink.addEventListener('click', () => {
+      const shareUrl = `${window.location.origin}?room=${currentRoomId}`;
+      navigator.clipboard.writeText(shareUrl);
+      showToast('Direct invite link copied to clipboard!');
+    });
+  }
 
-  btnLeaveRoom.addEventListener('click', () => {
-    if (socket && socket.connected) {
-      socket.emit('leave-room');
-    }
-    webrtcManager.disconnectAll();
-    localStorage.removeItem('airshare_current_room');
-    currentRoomId = '';
-    currentRoomCode.textContent = '------';
-    qrRoomCodeDisplay.textContent = '------';
-    connectionStatusDot.classList.remove('online');
-    peers = [];
-    updatePeersUI([]);
-    updateRoomStateUI(false);
+  if (btnLeaveRoom) {
+    btnLeaveRoom.addEventListener('click', () => {
+      if (socket && socket.connected) {
+        socket.emit('leave-room');
+      }
+      webrtcManager.disconnectAll();
+      localStorage.removeItem('airshare_current_room');
+      currentRoomId = '';
+      if (currentRoomCode) currentRoomCode.textContent = '------';
+      if (qrRoomCodeDisplay) qrRoomCodeDisplay.textContent = '------';
+      if (connectionStatusDot) connectionStatusDot.classList.remove('online');
+      peers = [];
+      updatePeersUI([]);
+      updateRoomStateUI(false);
 
-    const cleanUrl = window.location.origin + window.location.pathname;
-    window.history.pushState({}, '', cleanUrl);
+      const cleanUrl = window.location.origin + window.location.pathname;
+      window.history.pushState({}, '', cleanUrl);
 
-    showToast('Left room and disconnected.');
-  });
+      showToast('Left room and disconnected.');
+    });
+  }
 
-  btnShowQr.addEventListener('click', () => {
-    openQrModal();
-  });
+  if (btnShowQr) {
+    btnShowQr.addEventListener('click', () => {
+      openQrModal();
+    });
+  }
 
-  btnCloseQr.addEventListener('click', () => {
-    qrModal.classList.remove('active');
-  });
+  if (btnCloseQr) {
+    btnCloseQr.addEventListener('click', () => {
+      if (qrModal) qrModal.classList.remove('active');
+    });
+  }
 
-  btnCopyQrUrl.addEventListener('click', () => {
-    navigator.clipboard.writeText(qrUrlInput.value);
-    showToast('QR Code link copied!');
-  });
+  if (btnCopyQrUrl) {
+    btnCopyQrUrl.addEventListener('click', () => {
+      if (qrUrlInput) {
+        navigator.clipboard.writeText(qrUrlInput.value);
+        showToast('QR Code link copied!');
+      }
+    });
+  }
 
-  btnClosePreview.addEventListener('click', () => {
-    previewModal.classList.remove('active');
-    previewBody.innerHTML = '';
-  });
+  if (btnClosePreview) {
+    btnClosePreview.addEventListener('click', () => {
+      if (previewModal) previewModal.classList.remove('active');
+      if (previewBody) previewBody.innerHTML = '';
+    });
+  }
 
   // Camera QR Code Scanner Event Handlers
   if (btnOpenScanCamera) {
@@ -396,67 +422,82 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // File Dropzone Listeners
-  dropzone.addEventListener('click', () => fileInput.click());
+  // File Dropzone Listeners with Null Guards
+  if (dropzone) {
+    dropzone.addEventListener('click', () => {
+      if (fileInput) fileInput.click();
+    });
 
-  fileInput.addEventListener('change', (e) => {
-    addFilesToQueue(Array.from(e.target.files));
-    fileInput.value = '';
-  });
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.add('dragover');
+      }, false);
+    });
 
-  ['dragenter', 'dragover'].forEach(eventName => {
-    dropzone.addEventListener(eventName, (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dropzone.classList.add('dragover');
-    }, false);
-  });
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.remove('dragover');
+      }, false);
+    });
 
-  ['dragleave', 'drop'].forEach(eventName => {
-    dropzone.addEventListener(eventName, (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dropzone.classList.remove('dragover');
-    }, false);
-  });
-
-  dropzone.addEventListener('drop', (e) => {
-    const dt = e.dataTransfer;
-    const files = Array.from(dt.files);
-    addFilesToQueue(files);
-  });
-
-  btnClearQueue.addEventListener('click', () => {
-    fileQueue = [];
-    renderQueueUI();
-  });
-
-  btnSendFiles.addEventListener('click', () => {
-    if (fileQueue.length === 0) return;
-    const targetPeerId = targetPeerSelect.value;
-    const filesToSend = [...fileQueue];
-    fileQueue = [];
-    renderQueueUI();
-
-    filesToSend.forEach(file => {
-      if (targetPeerId === 'all') {
-        const otherPeers = peers.filter(p => p.socketId !== selfSocketId && p.socketId !== webrtcManager.peerId);
-        if (otherPeers.length === 0) {
-          alert('No other devices connected in this room! Scan QR code on your phone or open another device tab to connect.');
-          return;
-        }
-        otherPeers.forEach(peer => initiateFileTransfer(file, peer.socketId || peer.peerId));
-      } else {
-        initiateFileTransfer(file, targetPeerId);
+    dropzone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      if (dt && dt.files) {
+        addFilesToQueue(Array.from(dt.files));
       }
     });
-  });
+  }
 
-  btnClearHistory.addEventListener('click', () => {
-    historyItems = [];
-    saveHistoryToStorage();
-    renderHistoryUI();
-  });
+  if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+      if (e.target && e.target.files) {
+        addFilesToQueue(Array.from(e.target.files));
+        fileInput.value = '';
+      }
+    });
+  }
+
+  if (btnClearQueue) {
+    btnClearQueue.addEventListener('click', () => {
+      fileQueue = [];
+      renderQueueUI();
+    });
+  }
+
+  if (btnSendFiles) {
+    btnSendFiles.addEventListener('click', () => {
+      if (fileQueue.length === 0) return;
+      const targetPeerId = targetPeerSelect ? targetPeerSelect.value : 'all';
+      const filesToSend = [...fileQueue];
+      fileQueue = [];
+      renderQueueUI();
+
+      filesToSend.forEach(file => {
+        if (targetPeerId === 'all') {
+          const otherPeers = peers.filter(p => p.socketId !== selfSocketId && p.socketId !== webrtcManager.peerId);
+          if (otherPeers.length === 0) {
+            alert('No other devices connected in this room! Scan QR code on your phone or open another device tab to connect.');
+            return;
+          }
+          otherPeers.forEach(peer => initiateFileTransfer(file, peer.socketId || peer.peerId));
+        } else {
+          initiateFileTransfer(file, targetPeerId);
+        }
+      });
+    });
+  }
+
+  if (btnClearHistory) {
+    btnClearHistory.addEventListener('click', () => {
+      historyItems = [];
+      saveHistoryToStorage();
+      renderHistoryUI();
+    });
+  }
 
   // Core Transfer Logic
   async function initiateFileTransfer(file, targetSocketId) {
@@ -686,7 +727,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       targetPeerSelect.appendChild(opt);
     });
 
-    lucide.createIcons();
+    safeCreateIcons();
   }
 
   function addFilesToQueue(files) {
@@ -717,7 +758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       </div>
     `).join('');
 
-    lucide.createIcons();
+    safeCreateIcons();
   }
 
   window.removeQueueItem = (idx) => {
@@ -753,7 +794,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     `;
 
     transfersList.prepend(card);
-    lucide.createIcons();
+    safeCreateIcons();
     updateActiveCountUI();
   }
 
@@ -835,7 +876,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       </div>
     `).join('');
 
-    lucide.createIcons();
+    safeCreateIcons();
   }
 
   function saveHistoryToStorage() {
@@ -907,7 +948,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           </a>
         </div>
       `;
-      lucide.createIcons();
+      safeCreateIcons();
     }
 
     previewModal.classList.add('active');
