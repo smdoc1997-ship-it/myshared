@@ -962,3 +962,100 @@ body {
   color: #fff;
 }
 
+/* Transfer Actions & Right Group */
+.transfer-right-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.transfer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.transfer-actions .btn-icon-subtle {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.transfer-actions .btn-icon-subtle:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--accent-cyan);
+}
+
+.btn-pause:hover {
+  color: var(--accent-warning) !important;
+}
+
+.btn-cancel:hover {
+  color: var(--accent-danger) !important;
+}
+
+/* Ultra Responsive Design Rules for Mobile & Small Displays */
+@media (max-width: 640px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .room-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .room-code-display #currentRoomCode {
+    font-size: 1.8rem;
+    letter-spacing: 2px;
+  }
+
+  .room-controls {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .room-controls .btn {
+    width: 100%;
+  }
+
+  .devices-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .history-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .history-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .modal-card {
+    padding: 18px;
+    width: 95%;
+    max-width: 100%;
+    margin: 10px;
+  }
+
+  .toast-notification {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    text-align: center;
+  }
+}
+

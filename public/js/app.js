@@ -322,12 +322,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  if (btnClosePreview) {
-    btnClosePreview.addEventListener('click', () => {
-      if (previewModal) previewModal.classList.remove('active');
-      if (previewBody) previewBody.innerHTML = '';
-    });
-  }
+  const btnClosePreviewFooter = document.getElementById('btnClosePreviewFooter');
+  const closePreviewModal = () => {
+    if (previewModal) previewModal.classList.remove('active');
+    if (previewBody) previewBody.innerHTML = '';
+  };
+
+  if (btnClosePreview) btnClosePreview.addEventListener('click', closePreviewModal);
+  if (btnClosePreviewFooter) btnClosePreviewFooter.addEventListener('click', closePreviewModal);
+
+  // ESC Key & Backdrop Overlay Click Listeners to close any active modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closePreviewModal();
+      if (qrModal) qrModal.classList.remove('active');
+      if (renameModal) renameModal.classList.remove('active');
+      if (cameraQrModal) cameraQrModal.classList.remove('active');
+      if (typeof stopCameraQrScanner === 'function') stopCameraQrScanner();
+    }
+  });
+
+  [previewModal, qrModal, renameModal, cameraQrModal].forEach(modal => {
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.remove('active');
+          if (modal === previewModal && previewBody) previewBody.innerHTML = '';
+          if (modal === cameraQrModal && typeof stopCameraQrScanner === 'function') stopCameraQrScanner();
+        }
+      });
+    }
+  });
 
   // Camera QR Code Scanner Event Handlers
   if (btnOpenScanCamera) {
@@ -799,7 +824,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             <span class="transfer-channel-tag" id="tag-${transferId}">${channel}</span>
           </div>
         </div>
-        <span class="badge ${type === 'sending' ? 'self-badge' : 'peer-badge'}">${type.toUpperCase()}</span>
+        <div class="transfer-right-group">
+          <span class="badge ${type === 'sending' ? 'self-badge' : 'peer-badge'}">${type.toUpperCase()}</span>
+          <div class="transfer-actions" id="actions-${transferId}">
+            <button class="btn-icon-subtle btn-pause" onclick="togglePauseTransfer('${transferId}')" title="Pause / Resume Transfer">
+              <i data-lucide="pause" id="icon-pause-${transferId}"></i>
+            </button>
+            <button class="btn-icon-subtle btn-cancel" onclick="cancelTransfer('${transferId}')" title="Cancel Transfer">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+        </div>
       </div>
       <div class="transfer-progress-bar-bg">
         <div class="transfer-progress-bar-fill" id="bar-${transferId}"></div>
@@ -842,10 +877,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const speed = document.getElementById(`speed-${transferId}`);
       const bar = document.getElementById(`bar-${transferId}`);
       const pct = document.getElementById(`pct-${transferId}`);
+      const actions = document.getElementById(`actions-${transferId}`);
 
       if (bar) bar.style.width = '100%';
       if (pct) pct.textContent = '100%';
       if (speed) speed.textContent = 'Completed';
+      if (actions) actions.style.display = 'none';
     }
     updateActiveCountUI();
   }
@@ -854,10 +891,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     const card = document.getElementById(`transfer-${transferId}`);
     if (card) {
       const speed = document.getElementById(`speed-${transferId}`);
+      const actions = document.getElementById(`actions-${transferId}`);
       if (speed) speed.textContent = `Error: ${errorMsg}`;
+      if (actions) actions.style.display = 'none';
     }
     updateActiveCountUI();
   }
+
+  // Window global handlers for Pause, Resume, and Cancel transfer actions
+  window.togglePauseTransfer = (transferId) => {
+    const p2pState = webrtcManager.activeOutgoingTransfers.get(transferId);
+    const relayState = activeRelayOutgoings.get(transferId);
+    const state = p2pState || relayState;
+    const pauseBtnIcon = document.getElementById(`icon-pause-${transferId}`);
+    const speedEl = document.getElementById(`speed-${transferId}`);
+
+    if (!state) return;
+
+    if (!state.paused) {
+      state.paused = true;
+      if (webrtcManager.pauseTransfer) webrtcManager.pauseTransfer(transferId);
+      if (pauseBtnIcon) pauseBtnIcon.setAttribute('data-lucide', 'play');
+      if (speedEl) speedEl.textContent = 'Paused';
+      showToast('Transfer paused', 'warning');
+    } else {
+      state.paused = false;
+      if (webrtcManager.resumeTransfer) webrtcManager.resumeTransfer(transferId);
+      if (pauseBtnIcon) pauseBtnIcon.setAttribute('data-lucide', 'pause');
+      if (speedEl) speedEl.textContent = 'Resuming...';
+      showToast('Transfer resumed', 'info');
+    }
+    safeCreateIcons();
+  };
+
+  window.cancelTransfer = (transferId) => {
+    if (webrtcManager.cancelTransfer) webrtcManager.cancelTransfer(transferId);
+    const relayState = activeRelayOutgoings.get(transferId);
+    if (relayState) relayState.cancelled = true;
+
+    errorTransferUI(transferId, 'Cancelled by user');
+    showToast('Transfer cancelled', 'error');
+  };
 
   function updateActiveCountUI() {
     const active = transfersList.querySelectorAll('.transfer-item:not(.completed)').length;

@@ -469,7 +469,7 @@ class WebRTCManager {
     // Extract raw RTCDataChannel underlying PeerJS wrapper if present
     const rawChannel = dataChannel._channel || dataChannel.dataChannel || dataChannel;
 
-    this.activeOutgoingTransfers.set(transferId, { cancelled: false });
+    this.activeOutgoingTransfers.set(transferId, { paused: false, cancelled: false });
 
     const headerMsg = JSON.stringify({
       type: 'file-header',
@@ -508,9 +508,17 @@ class WebRTCManager {
       const state = this.activeOutgoingTransfers.get(transferId);
       if (!state || state.cancelled) {
         const cancelMsg = JSON.stringify({ type: 'file-cancel', transferId });
-        if (dataChannel.send) dataChannel.send(cancelMsg);
-        else if (rawChannel.send) rawChannel.send(cancelMsg);
+        try {
+          if (dataChannel.send) dataChannel.send(cancelMsg);
+          else if (rawChannel.send) rawChannel.send(cancelMsg);
+        } catch (e) {}
         return true;
+      }
+
+      // Pause loop check
+      while (state.paused) {
+        await new Promise(r => setTimeout(r, 200));
+        if (!this.activeOutgoingTransfers.has(transferId) || state.cancelled) break;
       }
 
       // Backpressure control for maximum throughput without overflow
@@ -570,9 +578,21 @@ class WebRTCManager {
     return true;
   }
 
+  pauseTransfer(transferId) {
+    const state = this.activeOutgoingTransfers.get(transferId);
+    if (state) state.paused = true;
+  }
+
+  resumeTransfer(transferId) {
+    const state = this.activeOutgoingTransfers.get(transferId);
+    if (state) state.paused = false;
+  }
+
   cancelTransfer(transferId) {
-    if (this.activeOutgoingTransfers.has(transferId)) {
-      this.activeOutgoingTransfers.get(transferId).cancelled = true;
+    const state = this.activeOutgoingTransfers.get(transferId);
+    if (state) {
+      state.cancelled = true;
+      this.activeOutgoingTransfers.delete(transferId);
     }
   }
 }

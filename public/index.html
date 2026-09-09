@@ -224,10 +224,13 @@
     <div class="modal-card modal-large">
       <div class="modal-header">
         <h3 id="previewTitle"><i data-lucide="eye"></i> File Preview</h3>
-        <button class="btn-close" id="btnClosePreview"><i data-lucide="x"></i></button>
+        <button class="btn-close" id="btnClosePreview" title="Close Preview (Esc)"><i data-lucide="x"></i></button>
       </div>
       <div class="modal-body preview-body" id="previewBody">
         <!-- Dynamic preview content inserted here -->
+      </div>
+      <div class="modal-footer" style="display:flex;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border-card);">
+        <button class="btn btn-secondary" id="btnClosePreviewFooter"><i data-lucide="x"></i> Close Preview</button>
       </div>
     </div>
   </div>
