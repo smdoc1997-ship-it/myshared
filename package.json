@@ -1,0 +1,28 @@
+{
+  "name": "airshare",
+  "version": "1.0.0",
+  "description": "Cross-device peer-to-peer and relayed file sharing web application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "file-sharing",
+    "webrtc",
+    "p2p",
+    "socket.io",
+    "qr-code",
+    "cross-device"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ip": "^2.0.1",
+    "isomorphic-git": "^1.41.9",
+    "qrcode": "^1.5.3",
+    "socket.io": "^4.7.5"
+  }
+}

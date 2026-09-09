@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AirShare — Fast Cross-Device File Transfer</title>
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- PeerJS Client for Vercel WebRTC Cloud Signaling -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <!-- Ambient Gradient Background Blobs -->
+  <div class="ambient-blob blob-1"></div>
+  <div class="ambient-blob blob-2"></div>
+  <div class="ambient-blob blob-3"></div>
+
+  <!-- App Wrapper -->
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <i data-lucide="zap"></i>
+        </div>
+        <div class="brand-text">
+          <h1>AirShare</h1>
+          <span class="tagline">Peer-to-Peer Device File Transfer</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="network-badge" id="networkBadge" title="Click for Network Info">
+          <i data-lucide="wifi"></i>
+          <span id="networkIpText">Detecting Network...</span>
+        </div>
+        <button class="btn btn-secondary btn-icon-only" id="btnShowQr" title="Scan QR Code to Connect Phone">
+          <i data-lucide="qr-code"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Grid Content -->
+    <main class="main-content">
+      <!-- Top Room Control Bar -->
+      <section class="card room-card">
+        <div class="room-header">
+          <div class="room-info">
+            <span class="section-subtitle">CURRENT ROOM</span>
+            <div class="room-code-display">
+              <span id="currentRoomCode">------</span>
+              <span class="status-indicator online" id="connectionStatusDot"></span>
+            </div>
+          </div>
+          <div class="room-controls">
+            <div class="input-group">
+              <input type="text" id="roomCodeInput" placeholder="Enter 6-digit room code" maxlength="6" autocomplete="off">
+              <button class="btn btn-primary" id="btnJoinRoom">
+                <i data-lucide="log-in"></i> Join Room
+              </button>
+            </div>
+            <button class="btn btn-outline" id="btnCreateRoom" title="Create a new room code">
+              <i data-lucide="plus-circle"></i> New Code
+            </button>
+            <button class="btn btn-outline" id="btnCopyLink" title="Copy Direct Invite Link">
+              <i data-lucide="copy"></i> Copy Link
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Connected Devices Grid -->
+      <section class="card devices-card">
+        <div class="card-header">
+          <div class="header-title">
+            <i data-lucide="devices"></i>
+            <h2>Connected Devices (<span id="peerCount">1</span>)</h2>
+          </div>
+          <span class="hint-text">Select target device or send to all devices in room</span>
+        </div>
+        <div class="devices-grid" id="devicesGrid">
+          <!-- Populated dynamically via JS -->
+          <div class="device-item self">
+            <div class="device-icon">
+              <i data-lucide="laptop"></i>
+            </div>
+            <div class="device-details">
+              <div class="device-name" id="selfDeviceName">My Device (You)</div>
+              <div class="device-meta" id="selfDeviceMeta">Detecting OS...</div>
+            </div>
+            <span class="badge self-badge">YOU</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- File Upload Dropzone -->
+      <section class="card dropzone-card">
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" multiple style="display: none;">
+          <div class="dropzone-icon">
+            <i data-lucide="upload-cloud"></i>
+          </div>
+          <h3>Drag & Drop Files Here</h3>
+          <p class="dropzone-subtitle">or click to browse from your computer / phone</p>
+          <div class="supported-tags">
+            <span class="tag"><i data-lucide="image"></i> Photos</span>
+            <span class="tag"><i data-lucide="film"></i> Videos</span>
+            <span class="tag"><i data-lucide="music"></i> Audio</span>
+            <span class="tag"><i data-lucide="file-text"></i> Documents</span>
+            <span class="tag"><i data-lucide="archive"></i> Zip & Any File</span>
+          </div>
+        </div>
+
+        <!-- Selected Files Queue -->
+        <div class="file-queue-container" id="fileQueueContainer" style="display: none;">
+          <div class="queue-header">
+            <h4>Selected Files (<span id="queueCount">0</span>)</h4>
+            <button class="btn btn-sm btn-ghost" id="btnClearQueue"><i data-lucide="trash-2"></i> Clear All</button>
+          </div>
+          <div class="queue-list" id="queueList"></div>
+          <div class="queue-footer">
+            <div class="target-select-wrapper">
+              <label for="targetPeerSelect">Recipient:</label>
+              <select id="targetPeerSelect">
+                <option value="all">Broadcast to All Connected Peers</option>
+              </select>
+            </div>
+            <button class="btn btn-accent btn-lg" id="btnSendFiles">
+              <i data-lucide="send"></i> Transfer Files Now
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Active Transfers HUD -->
+      <section class="card transfers-card" id="transfersCard">
+        <div class="card-header">
+          <div class="header-title">
+            <i data-lucide="arrow-up-down"></i>
+            <h2>Live File Transfers</h2>
+          </div>
+          <div class="transfer-stats-header">
+            <span id="activeTransfersCount">0 Active</span>
+          </div>
+        </div>
+        <div class="transfers-list" id="transfersList">
+          <div class="empty-state" id="emptyTransfersState">
+            <i data-lucide="radio"></i>
+            <p>No active file transfers. Select files above to begin transfer.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- History & Received Files -->
+      <section class="card history-card">
+        <div class="card-header">
+          <div class="header-title">
+            <i data-lucide="history"></i>
+            <h2>Transfer History & Received Files</h2>
+          </div>
+          <button class="btn btn-sm btn-ghost" id="btnClearHistory"><i data-lucide="x-circle"></i> Clear History</button>
+        </div>
+        <div class="history-list" id="historyList">
+          <div class="empty-state" id="emptyHistoryState">
+            <i data-lucide="inbox"></i>
+            <p>Received files and completed transfers will appear here.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>AirShare P2P Direct & Relayed File Sharing &bull; Zero Server Storage &bull; End-to-End Local Direct Transfer</p>
+    </footer>
+  </div>
+
+  <!-- QR Code Modal -->
+  <div class="modal-overlay" id="qrModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="qr-code"></i> Connect Phone / Second Device</h3>
+        <button class="btn-close" id="btnCloseQr"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body text-center">
+        <p class="modal-desc">Scan this QR code with your phone camera to join room <strong id="qrRoomCodeDisplay">------</strong> instantly over Wi-Fi!</p>
+        <div class="qr-container">
+          <img id="qrCodeImg" src="" alt="QR Code Loading...">
+        </div>
+        <div class="qr-url-box">
+          <input type="text" id="qrUrlInput" readonly>
+          <button class="btn btn-primary" id="btnCopyQrUrl"><i data-lucide="copy"></i> Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview Modal for Received Media -->
+  <div class="modal-overlay" id="previewModal">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <h3 id="previewTitle"><i data-lucide="eye"></i> File Preview</h3>
+        <button class="btn-close" id="btnClosePreview"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body preview-body" id="previewBody">
+        <!-- Dynamic preview content inserted here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/js/webrtc.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
