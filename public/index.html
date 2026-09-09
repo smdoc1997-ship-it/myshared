@@ -72,6 +72,9 @@
             <button class="btn btn-outline" id="btnCopyLink" title="Copy Direct Invite Link">
               <i data-lucide="copy"></i> Copy Link
             </button>
+            <button class="btn btn-outline btn-danger" id="btnLeaveRoom" title="Leave Current Room">
+              <i data-lucide="log-out"></i> Leave
+            </button>
           </div>
         </div>
       </section>
@@ -92,7 +95,12 @@
               <i data-lucide="laptop"></i>
             </div>
             <div class="device-details">
-              <div class="device-name" id="selfDeviceName">My Device (You)</div>
+              <div class="device-name-row">
+                <span class="device-name" id="selfDeviceName">My Device (You)</span>
+                <button class="btn-icon-subtle" id="btnEditDeviceName" title="Rename Device">
+                  <i data-lucide="edit-3"></i>
+                </button>
+              </div>
               <div class="device-meta" id="selfDeviceMeta">Detecting OS...</div>
             </div>
             <span class="badge self-badge">YOU</span>
@@ -211,6 +219,26 @@
       </div>
       <div class="modal-body preview-body" id="previewBody">
         <!-- Dynamic preview content inserted here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Device Modal -->
+  <div class="modal-overlay" id="renameModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="edit-3"></i> Rename Your Device</h3>
+        <button class="btn-close" id="btnCloseRename"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc" style="margin-bottom:14px;color:var(--text-secondary);">Enter a custom display name so connected devices can identify your device easily:</p>
+        <div class="input-group" style="width:100%;margin-bottom:16px;">
+          <input type="text" id="deviceNameInput" placeholder="e.g. John's Laptop, Gaming Rig" style="width:100%;text-transform:none;letter-spacing:normal;">
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button class="btn btn-outline" id="btnCancelRename">Cancel</button>
+          <button class="btn btn-primary" id="btnSaveDeviceName"><i data-lucide="check"></i> Save Name</button>
+        </div>
       </div>
     </div>
   </div>

@@ -10,6 +10,7 @@ class WebRTCManager {
     this.onError = options.onError || (() => {});
     this.onFileReceived = options.onFileReceived || (() => {});
     this.onPeerDiscovered = options.onPeerDiscovered || (() => {});
+    this.onPeerRenamed = options.onPeerRenamed || (() => {});
 
     this.peerConnections = new Map(); // targetSocketId -> RTCPeerConnection
     this.dataChannels = new Map();    // targetSocketId -> RTCDataChannel
@@ -33,6 +34,27 @@ class WebRTCManager {
     this.peer = null;
     this.peerId = '';
     this.deviceMeta = null;
+
+    // Start WebRTC connection persistent keep-alive heartbeat
+    this.startHeartbeat();
+  }
+
+  // Persistent keep-alive ping loop to prevent connection timeout
+  startHeartbeat() {
+    setInterval(() => {
+      // Ping PeerJS connections
+      this.peerJsConns.forEach((conn) => {
+        if (conn && conn.open) {
+          try { conn.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
+        }
+      });
+      // Ping RTCPeerConnection data channels
+      this.dataChannels.forEach((channel) => {
+        if (channel && channel.readyState === 'open') {
+          try { channel.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
+        }
+      });
+    }, 8000);
   }
 
   // Initialize PeerJS for Vercel / Cloud Serverless P2P Signaling
@@ -106,6 +128,9 @@ class WebRTCManager {
       if (typeof data === 'string') {
         try {
           const parsed = JSON.parse(data);
+          if (parsed.type === 'ping') {
+            return; // keep-alive heartbeat ping acknowledged
+          }
           if (parsed.type === 'peer-handshake') {
             this.knownPeerMetas.set(conn.peer, parsed.deviceMeta);
             this.onPeerDiscovered({
@@ -118,6 +143,13 @@ class WebRTCManager {
             });
             return;
           }
+          if (parsed.type === 'device-rename') {
+            const meta = this.knownPeerMetas.get(conn.peer) || {};
+            meta.deviceName = parsed.deviceName;
+            this.knownPeerMetas.set(conn.peer, meta);
+            this.onPeerRenamed({ peerId: conn.peer, deviceName: parsed.deviceName });
+            return;
+          }
         } catch (e) {}
       }
       this.handleIncomingDataChannelMessage(conn.peer, data);
@@ -127,6 +159,49 @@ class WebRTCManager {
       this.peerJsConns.delete(conn.peer);
       this.knownPeerMetas.delete(conn.peer);
     });
+  }
+
+  // Broadcast device name change to all connected peers
+  updateDeviceName(newDeviceName) {
+    if (this.deviceMeta) {
+      this.deviceMeta.deviceName = newDeviceName;
+    }
+    const renamePayload = JSON.stringify({ type: 'device-rename', deviceName: newDeviceName });
+    
+    this.peerJsConns.forEach((conn) => {
+      if (conn && conn.open) {
+        try { conn.send(renamePayload); } catch (e) {}
+      }
+    });
+
+    this.dataChannels.forEach((channel) => {
+      if (channel && channel.readyState === 'open') {
+        try { channel.send(renamePayload); } catch (e) {}
+      }
+    });
+  }
+
+  // Disconnect from room manually
+  disconnectAll() {
+    this.peerJsConns.forEach((conn) => {
+      try { conn.close(); } catch (e) {}
+    });
+    this.peerJsConns.clear();
+
+    this.dataChannels.forEach((channel) => {
+      try { channel.close(); } catch (e) {}
+    });
+    this.dataChannels.clear();
+
+    this.peerConnections.forEach((pc) => {
+      try { pc.close(); } catch (e) {}
+    });
+    this.peerConnections.clear();
+
+    if (this.peer) {
+      try { this.peer.destroy(); } catch (e) {}
+      this.peer = null;
+    }
   }
 
   initSocketListeners() {
@@ -175,12 +250,10 @@ class WebRTCManager {
   }
 
   async connectToPeer(targetSocketId) {
-    // 1. Check if existing PeerJS connection open
     if (this.peerJsConns.has(targetSocketId)) {
       return this.peerJsConns.get(targetSocketId);
     }
 
-    // 2. Check if direct PeerJS ID
     if (targetSocketId.startsWith('airshare-') && this.peer) {
       const conn = this.peer.connect(targetSocketId, { reliable: true });
       return new Promise((resolve) => {
@@ -192,7 +265,6 @@ class WebRTCManager {
       });
     }
 
-    // 3. WebRTC DataChannel via Socket.io
     if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') {
       return this.dataChannels.get(targetSocketId);
     }
@@ -273,6 +345,11 @@ class WebRTCManager {
     if (typeof data === 'string') {
       try {
         const msg = JSON.parse(data);
+        if (msg.type === 'ping') return;
+        if (msg.type === 'device-rename') {
+          this.onPeerRenamed({ peerId: senderSocketId, deviceName: msg.deviceName });
+          return;
+        }
         if (msg.type === 'file-header') {
           this.incomingTransfers.set(msg.transferId, {
             senderSocketId,

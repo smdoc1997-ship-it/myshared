@@ -12,8 +12,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       socket = io({
         reconnection: true,
-        reconnectionAttempts: 2,
-        timeout: 2000,
+        reconnectionAttempts: Infinity,
+        timeout: 3000,
         autoConnect: true
       });
     } catch (e) {
@@ -29,6 +29,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   let fileQueue = []; // files selected for upload
   let historyItems = []; // completed transfers
 
+  // System & Browser Info Detection (with localStorage custom name persistence)
+  const deviceInfo = detectDeviceDetails();
+
   // Fallback incoming transfers storage over Socket.io relay
   const relayIncomingTransfers = new Map();
   const activeRelayOutgoings = new Map();
@@ -39,11 +42,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     onComplete: (transferId) => completeTransferUI(transferId),
     onError: (transferId, errorMsg) => errorTransferUI(transferId, errorMsg),
     onFileReceived: (fileData) => handleReceivedFile(fileData),
-    onPeerDiscovered: (peerData) => handleDiscoveredPeer(peerData)
+    onPeerDiscovered: (peerData) => handleDiscoveredPeer(peerData),
+    onPeerRenamed: (peerData) => handlePeerRenamed(peerData)
   });
-
-  // System & Browser Info Detection
-  const deviceInfo = detectDeviceDetails();
 
   // DOM Element Selectors
   const networkBadge = document.getElementById('networkBadge');
@@ -54,12 +55,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnJoinRoom = document.getElementById('btnJoinRoom');
   const btnCreateRoom = document.getElementById('btnCreateRoom');
   const btnCopyLink = document.getElementById('btnCopyLink');
+  const btnLeaveRoom = document.getElementById('btnLeaveRoom');
   const btnShowQr = document.getElementById('btnShowQr');
   
   const peerCount = document.getElementById('peerCount');
   const devicesGrid = document.getElementById('devicesGrid');
   const selfDeviceName = document.getElementById('selfDeviceName');
   const selfDeviceMeta = document.getElementById('selfDeviceMeta');
+  const btnEditDeviceName = document.getElementById('btnEditDeviceName');
 
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -91,116 +94,131 @@ document.addEventListener('DOMContentLoaded', async () => {
   const previewTitle = document.getElementById('previewTitle');
   const previewBody = document.getElementById('previewBody');
 
-  // Update Self Device Meta UI
-  selfDeviceName.textContent = `${deviceInfo.deviceName} (You)`;
-  selfDeviceMeta.textContent = `${deviceInfo.osName} • ${deviceInfo.browserName}`;
+  const renameModal = document.getElementById('renameModal');
+  const btnCloseRename = document.getElementById('btnCloseRename');
+  const btnCancelRename = document.getElementById('btnCancelRename');
+  const btnSaveDeviceName = document.getElementById('btnSaveDeviceName');
+  const deviceNameInput = document.getElementById('deviceNameInput');
+
+  // Update Self Device UI
+  updateSelfDeviceUI();
+
+  // Restore Saved Transfer History from localStorage
+  loadHistoryFromStorage();
 
   // Fetch Network Info & URL Params
   await fetchNetworkInfo();
   checkUrlParamsAndJoinRoom();
 
-  // Socket.io Handlers
-  socket.on('connect', () => {
-    selfSocketId = socket.id;
-    connectionStatusDot.classList.add('online');
-    console.log('[Socket] Connected with ID:', socket.id);
-  });
+  // Socket.io Handlers (Persistent auto-reconnect)
+  if (socket) {
+    socket.on('connect', () => {
+      selfSocketId = socket.id;
+      connectionStatusDot.classList.add('online');
+      console.log('[Socket] Connected with ID:', socket.id);
+      if (currentRoomId) {
+        joinRoom(currentRoomId);
+      }
+    });
 
-  socket.on('disconnect', () => {
-    connectionStatusDot.classList.remove('online');
-    console.log('[Socket] Disconnected');
-  });
+    socket.on('disconnect', (reason) => {
+      console.log('[Socket] Disconnected:', reason);
+      // Keep online status green if PeerJS is active
+      if (!webrtcManager.peer) {
+        connectionStatusDot.classList.remove('online');
+      }
+    });
 
-  socket.on('joined-room-success', ({ roomId, selfId, peers: roomPeers }) => {
-    currentRoomId = roomId;
-    currentRoomCode.textContent = roomId;
-    qrRoomCodeDisplay.textContent = roomId;
-    updatePeersUI(roomPeers);
+    socket.on('joined-room-success', ({ roomId, selfId, peers: roomPeers }) => {
+      currentRoomId = roomId;
+      currentRoomCode.textContent = roomId;
+      qrRoomCodeDisplay.textContent = roomId;
+      connectionStatusDot.classList.add('online');
+      localStorage.setItem('airshare_current_room', roomId);
+      updatePeersUI(roomPeers);
+    });
 
-    // Update URL hash/query without reload
-    const newUrl = new URL(window.location.href);
-    newUrl.searchParams.set('room', roomId);
-    window.history.pushState({}, '', newUrl);
-  });
-
-  socket.on('room-peers', (roomPeers) => {
-    updatePeersUI(roomPeers);
-  });
+    socket.on('room-peers', (roomPeers) => {
+      updatePeersUI(roomPeers);
+    });
+  }
 
   // Socket.io Relayed File Transfer Events (Fallback Engine)
-  socket.on('relay-file-init', ({ senderSocketId, fileMeta }) => {
-    relayIncomingTransfers.set(fileMeta.transferId, {
-      senderSocketId,
-      metadata: fileMeta,
-      chunks: [],
-      receivedBytes: 0,
-      totalBytes: fileMeta.size,
-      startTime: Date.now()
+  if (socket) {
+    socket.on('relay-file-init', ({ senderSocketId, fileMeta }) => {
+      relayIncomingTransfers.set(fileMeta.transferId, {
+        senderSocketId,
+        metadata: fileMeta,
+        chunks: [],
+        receivedBytes: 0,
+        totalBytes: fileMeta.size,
+        startTime: Date.now()
+      });
+
+      createTransferCardUI({
+        transferId: fileMeta.transferId,
+        fileName: fileMeta.name,
+        fileSize: fileMeta.size,
+        type: 'receiving',
+        channel: 'Relayed Stream'
+      });
+
+      socket.emit('relay-file-response', {
+        targetSocketId: senderSocketId,
+        fileId: fileMeta.transferId,
+        accepted: true
+      });
     });
 
-    createTransferCardUI({
-      transferId: fileMeta.transferId,
-      fileName: fileMeta.name,
-      fileSize: fileMeta.size,
-      type: 'receiving',
-      channel: 'Relayed Stream'
+    socket.on('relay-file-chunk', ({ senderSocketId, fileId, chunkIndex, totalChunks, chunkData }) => {
+      const transfer = relayIncomingTransfers.get(fileId);
+      if (!transfer) return;
+
+      transfer.chunks.push(chunkData);
+      transfer.receivedBytes += chunkData.byteLength || chunkData.length || 0;
+
+      const progress = Math.min(100, Math.round((transfer.receivedBytes / transfer.totalBytes) * 100));
+      const elapsedSec = (Date.now() - transfer.startTime) / 1000;
+      const speedBps = elapsedSec > 0 ? transfer.receivedBytes / elapsedSec : 0;
+      const remainingBytes = transfer.totalBytes - transfer.receivedBytes;
+      const etaSec = speedBps > 0 ? remainingBytes / speedBps : 0;
+
+      updateTransferProgressUI(fileId, {
+        progress,
+        receivedBytes: transfer.receivedBytes,
+        totalBytes: transfer.totalBytes,
+        speedBps,
+        etaSec,
+        channel: 'Relayed Stream'
+      });
     });
 
-    socket.emit('relay-file-response', {
-      targetSocketId: senderSocketId,
-      fileId: fileMeta.transferId,
-      accepted: true
-    });
-  });
+    socket.on('relay-file-complete', ({ senderSocketId, fileId }) => {
+      const transfer = relayIncomingTransfers.get(fileId);
+      if (!transfer) return;
 
-  socket.on('relay-file-chunk', ({ senderSocketId, fileId, chunkIndex, totalChunks, chunkData }) => {
-    const transfer = relayIncomingTransfers.get(fileId);
-    if (!transfer) return;
-
-    transfer.chunks.push(chunkData);
-    transfer.receivedBytes += chunkData.byteLength || chunkData.length || 0;
-
-    const progress = Math.min(100, Math.round((transfer.receivedBytes / transfer.totalBytes) * 100));
-    const elapsedSec = (Date.now() - transfer.startTime) / 1000;
-    const speedBps = elapsedSec > 0 ? transfer.receivedBytes / elapsedSec : 0;
-    const remainingBytes = transfer.totalBytes - transfer.receivedBytes;
-    const etaSec = speedBps > 0 ? remainingBytes / speedBps : 0;
-
-    updateTransferProgressUI(fileId, {
-      progress,
-      receivedBytes: transfer.receivedBytes,
-      totalBytes: transfer.totalBytes,
-      speedBps,
-      etaSec,
-      channel: 'Relayed Stream'
-    });
-  });
-
-  socket.on('relay-file-complete', ({ senderSocketId, fileId }) => {
-    const transfer = relayIncomingTransfers.get(fileId);
-    if (!transfer) return;
-
-    const fileBlob = new Blob(transfer.chunks, { type: transfer.metadata.mimeType || 'application/octet-stream' });
-    relayIncomingTransfers.delete(fileId);
-
-    completeTransferUI(fileId);
-
-    handleReceivedFile({
-      transferId: fileId,
-      name: transfer.metadata.name,
-      size: transfer.metadata.size,
-      mimeType: transfer.metadata.mimeType,
-      blob: fileBlob,
-      senderSocketId
-    });
-  });
-
-  socket.on('relay-file-cancel', ({ senderSocketId, fileId }) => {
-    if (relayIncomingTransfers.has(fileId)) {
+      const fileBlob = new Blob(transfer.chunks, { type: transfer.metadata.mimeType || 'application/octet-stream' });
       relayIncomingTransfers.delete(fileId);
-      errorTransferUI(fileId, 'Cancelled by sender');
-    }
-  });
+
+      completeTransferUI(fileId);
+
+      handleReceivedFile({
+        transferId: fileId,
+        name: transfer.metadata.name,
+        size: transfer.metadata.size,
+        mimeType: transfer.metadata.mimeType,
+        blob: fileBlob,
+        senderSocketId
+      });
+    });
+
+    socket.on('relay-file-cancel', ({ senderSocketId, fileId }) => {
+      if (relayIncomingTransfers.has(fileId)) {
+        relayIncomingTransfers.delete(fileId);
+        errorTransferUI(fileId, 'Cancelled by sender');
+      }
+    });
+  }
 
   // UI Event Listeners
   btnJoinRoom.addEventListener('click', () => {
@@ -229,7 +247,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
       console.warn('Backend room API fallback:', err);
     }
-    // Fallback: generate local 6-digit room code if backend fetch fails
     const localCode = Math.floor(100000 + Math.random() * 900000).toString();
     joinRoom(localCode);
   });
@@ -238,6 +255,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const shareUrl = `${window.location.origin}?room=${currentRoomId}`;
     navigator.clipboard.writeText(shareUrl);
     showToast('Direct invite link copied to clipboard!');
+  });
+
+  btnLeaveRoom.addEventListener('click', () => {
+    webrtcManager.disconnectAll();
+    localStorage.removeItem('airshare_current_room');
+    currentRoomId = '';
+    currentRoomCode.textContent = '------';
+    qrRoomCodeDisplay.textContent = '------';
+    connectionStatusDot.classList.remove('online');
+    peers = [];
+    updatePeersUI([]);
+    showToast('Left room and disconnected.');
   });
 
   btnShowQr.addEventListener('click', () => {
@@ -257,6 +286,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     previewModal.classList.remove('active');
     previewBody.innerHTML = '';
   });
+
+  // Device Rename Event Handlers
+  if (btnEditDeviceName) {
+    btnEditDeviceName.addEventListener('click', () => {
+      deviceNameInput.value = deviceInfo.deviceName;
+      renameModal.classList.add('active');
+      deviceNameInput.focus();
+    });
+  }
+
+  const closeRenameModal = () => renameModal.classList.remove('active');
+  if (btnCloseRename) btnCloseRename.addEventListener('click', closeRenameModal);
+  if (btnCancelRename) btnCancelRename.addEventListener('click', closeRenameModal);
+
+  if (btnSaveDeviceName) {
+    btnSaveDeviceName.addEventListener('click', () => {
+      const newName = deviceNameInput.value.trim();
+      if (!newName) return;
+      
+      deviceInfo.deviceName = newName;
+      localStorage.setItem('airshare_device_name', newName);
+      updateSelfDeviceUI();
+      
+      webrtcManager.updateDeviceName(newName);
+      if (socket && socket.connected) {
+        socket.emit('join-room', {
+          roomId: currentRoomId,
+          deviceName: deviceInfo.deviceName,
+          deviceType: deviceInfo.deviceType,
+          osName: deviceInfo.osName,
+          browserName: deviceInfo.browserName
+        });
+      }
+      
+      closeRenameModal();
+      showToast(`Device renamed to "${newName}"`);
+    });
+  }
 
   // File Dropzone Listeners
   dropzone.addEventListener('click', () => fileInput.click());
@@ -302,13 +369,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     filesToSend.forEach(file => {
       if (targetPeerId === 'all') {
-        // Send to all peers in room except self
-        const otherPeers = peers.filter(p => p.socketId !== selfSocketId);
+        const otherPeers = peers.filter(p => p.socketId !== selfSocketId && p.socketId !== webrtcManager.peerId);
         if (otherPeers.length === 0) {
           alert('No other devices connected in this room! Scan QR code on your phone or open another device tab to connect.');
           return;
         }
-        otherPeers.forEach(peer => initiateFileTransfer(file, peer.socketId));
+        otherPeers.forEach(peer => initiateFileTransfer(file, peer.socketId || peer.peerId));
       } else {
         initiateFileTransfer(file, targetPeerId);
       }
@@ -317,6 +383,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   btnClearHistory.addEventListener('click', () => {
     historyItems = [];
+    saveHistoryToStorage();
     renderHistoryUI();
   });
 
@@ -329,24 +396,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       fileName: file.name,
       fileSize: file.size,
       type: 'sending',
-      channel: 'WebRTC P2P (Connecting...)'
+      channel: 'WebRTC P2P'
     });
 
-    // Attempt 1: Fast WebRTC Direct P2P Channel
     const p2pSuccess = await webrtcManager.sendFileP2P(targetSocketId, file, transferId);
 
-    if (!p2pSuccess) {
+    if (!p2pSuccess && socket && socket.connected) {
       console.log(`[Transfer] P2P fallback triggered for file ${file.name}. Using Socket.io relay stream.`);
       updateTransferChannelUI(transferId, 'Relayed Stream');
       await sendFileViaSocketRelay(file, targetSocketId, transferId);
     }
   }
 
-  // Socket.io Chunked Relay Implementation (Fallback stream)
+  // Socket.io Chunked Relay Implementation
   async function sendFileViaSocketRelay(file, targetSocketId, transferId) {
     activeRelayOutgoings.set(transferId, { cancelled: false });
 
-    // 1. Send file metadata
     socket.emit('relay-file-init', {
       targetSocketId,
       fileMeta: {
@@ -357,7 +422,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
 
-    // 2. Stream 64KB chunks over Socket.io
     const CHUNK_SIZE = 64 * 1024;
     let offset = 0;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -400,7 +464,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         channel: 'Relayed Stream'
       });
 
-      // Small throttle to avoid flooding socket loop
       await new Promise(r => setTimeout(r, 8));
     }
 
@@ -409,11 +472,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     activeRelayOutgoings.delete(transferId);
   }
 
-  // Handle Received File (Trigger Download + History item)
+  // Handle Received File (Trigger Download + Persistent History log)
   function handleReceivedFile({ transferId, name, size, mimeType, blob }) {
     const url = URL.createObjectURL(blob);
     
-    // Automatically add to history list
     const item = {
       id: transferId,
       name,
@@ -424,16 +486,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       timestamp: new Date().toLocaleTimeString()
     };
     historyItems.unshift(item);
+    saveHistoryToStorage();
     renderHistoryUI();
 
     showToast(`Received file: ${name}`);
   }
 
   function handleDiscoveredPeer(peerData) {
-    if (!peers.some(p => p.socketId === peerData.socketId)) {
+    if (!peers.some(p => p.socketId === peerData.socketId || p.peerId === peerData.peerId)) {
       peers.push(peerData);
       updatePeersUI(peers);
       showToast(`Device connected: ${peerData.deviceName}`);
+    }
+  }
+
+  function handlePeerRenamed({ peerId, deviceName }) {
+    const peer = peers.find(p => p.socketId === peerId || p.peerId === peerId);
+    if (peer) {
+      peer.deviceName = deviceName;
+      updatePeersUI(peers);
+      showToast(`Peer renamed to "${deviceName}"`);
     }
   }
 
@@ -442,6 +514,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentRoomId = roomId;
     currentRoomCode.textContent = roomId;
     qrRoomCodeDisplay.textContent = roomId;
+    connectionStatusDot.classList.add('online');
+    localStorage.setItem('airshare_current_room', roomId);
 
     if (socket && socket.connected) {
       socket.emit('join-room', {
@@ -453,9 +527,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
-    // Initialize PeerJS for Vercel / Cloud WebRTC P2P
     webrtcManager.initPeerJs(roomId, deviceInfo, (peerId) => {
-      console.log('[App] PeerJS connected:', peerId);
+      console.log('[App] PeerJS active with ID:', peerId);
+      connectionStatusDot.classList.add('online');
     });
 
     const newUrl = new URL(window.location.href);
@@ -463,12 +537,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.history.pushState({}, '', newUrl);
   }
 
+  function updateSelfDeviceUI() {
+    if (selfDeviceName) selfDeviceName.textContent = `${deviceInfo.deviceName} (You)`;
+    if (selfDeviceMeta) selfDeviceMeta.textContent = `${deviceInfo.osName} • ${deviceInfo.browserName}`;
+  }
+
   function updatePeersUI(roomPeers) {
     peers = roomPeers;
-    const otherPeers = peers.filter(p => p.socketId !== selfSocketId);
-    peerCount.textContent = peers.length;
+    const otherPeers = peers.filter(p => p.socketId !== selfSocketId && p.socketId !== webrtcManager.peerId);
+    peerCount.textContent = otherPeers.length + 1;
 
-    // Render device grid
     devicesGrid.innerHTML = '';
 
     // Always render Self card first
@@ -477,14 +555,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     selfDiv.innerHTML = `
       <div class="device-icon"><i data-lucide="${getDeviceIcon(deviceInfo.deviceType)}"></i></div>
       <div class="device-details">
-        <div class="device-name">${deviceInfo.deviceName} (You)</div>
+        <div class="device-name-row">
+          <span class="device-name">${escapeHtml(deviceInfo.deviceName)} (You)</span>
+          <button class="btn-icon-subtle" id="btnEditDeviceNameInner" title="Rename Device">
+            <i data-lucide="edit-3"></i>
+          </button>
+        </div>
         <div class="device-meta">${deviceInfo.osName} • ${deviceInfo.browserName}</div>
       </div>
       <span class="badge self-badge">YOU</span>
     `;
     devicesGrid.appendChild(selfDiv);
 
-    // Render other connected peers
+    const editBtnInner = document.getElementById('btnEditDeviceNameInner');
+    if (editBtnInner) {
+      editBtnInner.addEventListener('click', () => {
+        deviceNameInput.value = deviceInfo.deviceName;
+        renameModal.classList.add('active');
+        deviceNameInput.focus();
+      });
+    }
+
+    // Render connected peers
     otherPeers.forEach(peer => {
       const peerDiv = document.createElement('div');
       peerDiv.className = 'device-item';
@@ -497,16 +589,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         <span class="badge peer-badge">CONNECTED</span>
       `;
       peerDiv.addEventListener('click', () => {
-        targetPeerSelect.value = peer.socketId;
+        targetPeerSelect.value = peer.socketId || peer.peerId;
       });
       devicesGrid.appendChild(peerDiv);
     });
 
-    // Update target select dropdown options
     targetPeerSelect.innerHTML = '<option value="all">Broadcast to All Connected Peers</option>';
     otherPeers.forEach(peer => {
       const opt = document.createElement('option');
-      opt.value = peer.socketId;
+      opt.value = peer.socketId || peer.peerId;
       opt.textContent = `${peer.deviceName} (${peer.osName})`;
       targetPeerSelect.appendChild(opt);
     });
@@ -649,17 +740,41 @@ document.addEventListener('DOMContentLoaded', async () => {
           </div>
         </div>
         <div class="history-actions">
+          ${item.blob || item.url ? `
           <button class="btn btn-sm btn-outline" onclick="previewHistoryFile(${idx})">
             <i data-lucide="eye"></i> Preview
           </button>
-          <a class="btn btn-sm btn-primary" href="${item.url}" download="${escapeHtml(item.name)}">
+          <a class="btn btn-sm btn-primary" href="${item.url || '#'}" download="${escapeHtml(item.name)}">
             <i data-lucide="download"></i> Download
-          </a>
+          </a>` : '<span class="queue-file-size">Completed</span>'}
         </div>
       </div>
     `).join('');
 
     lucide.createIcons();
+  }
+
+  function saveHistoryToStorage() {
+    try {
+      const serializable = historyItems.map(item => ({
+        id: item.id,
+        name: item.name,
+        size: item.size,
+        mimeType: item.mimeType,
+        timestamp: item.timestamp
+      }));
+      localStorage.setItem('airshare_history_v3', JSON.stringify(serializable));
+    } catch (e) {}
+  }
+
+  function loadHistoryFromStorage() {
+    try {
+      const saved = localStorage.getItem('airshare_history_v3');
+      if (saved) {
+        historyItems = JSON.parse(saved);
+        renderHistoryUI();
+      }
+    } catch (e) {}
   }
 
   window.previewHistoryFile = (idx) => {
@@ -686,20 +801,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       audio.autoplay = true;
       previewBody.appendChild(audio);
     } else if (item.mimeType.startsWith('text/') || item.name.endsWith('.txt') || item.name.endsWith('.json') || item.name.endsWith('.md')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const pre = document.createElement('pre');
-        pre.className = 'text-preview';
-        pre.textContent = e.target.result;
-        previewBody.appendChild(pre);
-      };
-      reader.readAsText(item.blob);
+      if (item.blob) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const pre = document.createElement('pre');
+          pre.className = 'text-preview';
+          pre.textContent = e.target.result;
+          previewBody.appendChild(pre);
+        };
+        reader.readAsText(item.blob);
+      } else {
+        previewBody.innerHTML = `<p class="modal-desc">Text file preview requires file blob in active session.</p>`;
+      }
     } else {
       previewBody.innerHTML = `
         <div class="text-center p-4">
           <i data-lucide="file-question" style="width:64px;height:64px;margin-bottom:12px;"></i>
           <p>Direct preview is not supported for this file type.</p>
-          <a class="btn btn-primary mt-3" href="${item.url}" download="${escapeHtml(item.name)}">
+          <a class="btn btn-primary mt-3" href="${item.url || '#'}" download="${escapeHtml(item.name)}">
             Download File (${formatBytes(item.size)})
           </a>
         </div>
@@ -751,10 +870,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   function checkUrlParamsAndJoinRoom() {
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
+    const savedRoom = localStorage.getItem('airshare_current_room');
+
     if (roomParam && roomParam.length === 6) {
       joinRoom(roomParam);
+    } else if (savedRoom && savedRoom.length === 6) {
+      joinRoom(savedRoom);
     } else {
-      // Auto-create room if none specified
       btnCreateRoom.click();
     }
   }
@@ -779,7 +901,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ua.indexOf('Firefox') !== -1) browserName = 'Firefox';
     if (ua.indexOf('Edg') !== -1) browserName = 'Edge';
 
-    const deviceName = `${osName} ${deviceType === 'mobile' ? 'Phone' : 'Device'}`;
+    const customName = localStorage.getItem('airshare_device_name');
+    const deviceName = customName || `${osName} ${deviceType === 'mobile' ? 'Phone' : 'Device'}`;
     return { deviceType, osName, browserName, deviceName };
   }
 
