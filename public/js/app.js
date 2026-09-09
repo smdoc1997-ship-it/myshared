@@ -112,8 +112,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restore Saved Transfer History from localStorage
   loadHistoryFromStorage();
 
-  // Fetch Network Info & URL Params
-  await fetchNetworkInfo();
+  // Fetch Network Info & URL Params asynchronously without blocking DOM initialization
+  fetchNetworkInfo().catch(err => console.warn('Network info fetch:', err));
   checkUrlParamsAndJoinRoom();
 
   // Socket.io Handlers (Persistent auto-reconnect)
@@ -242,17 +242,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  btnCreateRoom.addEventListener('click', async () => {
-    try {
-      const res = await fetch('/api/room/new');
-      const data = await res.json();
-      if (data && data.roomId) {
-        joinRoom(data.roomId);
-        return;
-      }
-    } catch (err) {
-      console.warn('Backend room API fallback:', err);
-    }
+  btnCreateRoom.addEventListener('click', () => {
+    // Generate 6-digit room code instantly
     const localCode = Math.floor(100000 + Math.random() * 900000).toString();
     joinRoom(localCode);
   });
@@ -944,20 +935,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     qrUrlInput.value = targetUrl;
     qrRoomCodeDisplay.textContent = currentRoomId;
 
+    // Set immediate client fallback QR image so modal opens instantly
+    qrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(targetUrl)}`;
+    qrModal.classList.add('active');
+
     try {
       const res = await fetch(`/api/qr-code?url=${encodeURIComponent(targetUrl)}`);
       const data = await res.json();
       if (data && data.qrDataUrl) {
         qrCodeImg.src = data.qrDataUrl;
-      } else {
-        throw new Error('No QR data URL');
       }
     } catch (err) {
-      console.warn('Backend QR API fallback, using public QR generator:', err);
-      qrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(targetUrl)}`;
+      console.warn('Backend QR API fallback:', err);
     }
-
-    qrModal.classList.add('active');
   }
 
   function checkUrlParamsAndJoinRoom() {
