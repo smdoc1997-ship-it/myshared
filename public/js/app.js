@@ -612,7 +612,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.history.pushState({}, '', newUrl);
   }
 
+  const roomJoinInputGroup = document.getElementById('roomJoinInputGroup');
+
   function updateRoomStateUI(isJoined) {
+    if (roomJoinInputGroup) roomJoinInputGroup.style.display = isJoined ? 'none' : 'inline-flex';
     if (btnLeaveRoom) btnLeaveRoom.style.display = isJoined ? 'inline-flex' : 'none';
     if (btnCopyLink) btnCopyLink.style.display = isJoined ? 'inline-flex' : 'none';
     if (btnShowQr) btnShowQr.style.display = isJoined ? 'inline-flex' : 'none';
