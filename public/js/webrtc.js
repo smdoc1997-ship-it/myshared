@@ -5,6 +5,7 @@
 class WebRTCManager {
   constructor(socket, options = {}) {
     this.socket = socket;
+    this.onTransferInit = options.onTransferInit || (() => {});
     this.onProgress = options.onProgress || (() => {});
     this.onComplete = options.onComplete || (() => {});
     this.onError = options.onError || (() => {});
@@ -406,12 +407,24 @@ class WebRTCManager {
             totalBytes: msg.size,
             startTime: Date.now()
           });
+
+          // Trigger receiver UI transfer card creation immediately
+          this.onTransferInit({
+            transferId: msg.transferId,
+            fileName: msg.name,
+            fileSize: msg.size,
+            type: 'receiving',
+            channel: 'WebRTC Direct P2P'
+          });
         } else if (msg.type === 'file-cancel') {
           const transfer = this.incomingTransfers.get(msg.transferId);
           if (transfer) {
             this.incomingTransfers.delete(msg.transferId);
             this.onError(msg.transferId, 'Transfer cancelled by sender');
           }
+        } else if (msg.type === 'file-ack') {
+          // Sender receives confirmation that receiver assembled full file
+          this.onComplete(msg.transferId);
         }
       } catch (err) {
         console.error('Failed to parse WebRTC text message:', err);
@@ -447,6 +460,19 @@ class WebRTCManager {
       if (transfer.receivedBytes >= transfer.totalBytes) {
         const fileBlob = new Blob(transfer.chunks, { type: transfer.metadata.mimeType || 'application/octet-stream' });
         this.incomingTransfers.delete(transferId);
+
+        // Mark receiver card complete
+        this.onComplete(transferId);
+
+        // Send confirmation ACK back to sender over DataChannel
+        const ackMsg = JSON.stringify({ type: 'file-ack', transferId });
+        try {
+          if (this.peerJsConns.has(senderSocketId)) {
+            this.peerJsConns.get(senderSocketId).send(ackMsg);
+          } else if (this.dataChannels.has(senderSocketId)) {
+            this.dataChannels.get(senderSocketId).send(ackMsg);
+          }
+        } catch (e) {}
 
         this.onFileReceived({
           transferId,

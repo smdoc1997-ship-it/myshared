@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // WebRTC Manager Instance
   const webrtcManager = new WebRTCManager(socket, {
+    onTransferInit: (transferMeta) => createTransferCardUI(transferMeta),
     onProgress: (transferId, stats) => updateTransferProgressUI(transferId, stats),
     onComplete: (transferId) => completeTransferUI(transferId),
     onError: (transferId, errorMsg) => errorTransferUI(transferId, errorMsg),
