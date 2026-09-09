@@ -239,6 +239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const code = roomCodeInput ? roomCodeInput.value.trim() : '';
       if (code.length === 6) {
         joinRoom(code);
+        showToast(`Joined Room: ${code}`);
       } else {
         alert('Please enter a valid 6-digit room code.');
       }
@@ -257,6 +258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnCreateRoom.addEventListener('click', () => {
       const localCode = Math.floor(100000 + Math.random() * 900000).toString();
       joinRoom(localCode);
+      showToast(`New Room Code Created: ${localCode}`);
     });
   }
 
@@ -625,10 +627,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // UI Helpers & Renderers
   function joinRoom(roomId) {
+    // If switching from an existing room, disconnect previous peer connections cleanly
+    if (currentRoomId && currentRoomId !== roomId) {
+      if (socket && socket.connected) {
+        socket.emit('leave-room');
+      }
+      webrtcManager.disconnectAll();
+    }
+
     currentRoomId = roomId;
-    currentRoomCode.textContent = roomId;
-    qrRoomCodeDisplay.textContent = roomId;
-    connectionStatusDot.classList.add('online');
+    if (currentRoomCode) currentRoomCode.textContent = roomId;
+    if (qrRoomCodeDisplay) qrRoomCodeDisplay.textContent = roomId;
+    if (roomCodeInput) roomCodeInput.value = '';
+    if (connectionStatusDot) connectionStatusDot.classList.add('online');
     localStorage.setItem('airshare_current_room', roomId);
 
     if (socket && socket.connected) {
@@ -643,7 +654,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     webrtcManager.initPeerJs(roomId, deviceInfo, (peerId) => {
       console.log('[App] PeerJS active with ID:', peerId);
-      connectionStatusDot.classList.add('online');
+      if (connectionStatusDot) connectionStatusDot.classList.add('online');
     });
 
     updateRoomStateUI(true);
