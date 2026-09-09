@@ -43,6 +43,21 @@ class WebRTCManager {
         urls: 'turn:global.relay.metered.ca:443?transport=tcp',
         username: 'e0d9b4b0e5bfb7c4e5b7',
         credential: 'openrelaypassword'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
       }
     ];
 
@@ -151,15 +166,28 @@ class WebRTCManager {
             return; // keep-alive heartbeat ping acknowledged
           }
           if (parsed.type === 'peer-handshake') {
-            this.knownPeerMetas.set(conn.peer, parsed.deviceMeta);
+            const meta = parsed.deviceMeta || {};
+            this.knownPeerMetas.set(conn.peer, meta);
             this.onPeerDiscovered({
               socketId: conn.peer,
               peerId: conn.peer,
-              deviceName: parsed.deviceMeta.deviceName,
-              deviceType: parsed.deviceMeta.deviceType,
-              osName: parsed.deviceMeta.osName,
-              browserName: parsed.deviceMeta.browserName
+              deviceName: meta.deviceName || 'Connected Device',
+              deviceType: meta.deviceType || 'desktop',
+              osName: meta.osName || 'Unknown OS',
+              browserName: meta.browserName || 'Browser'
             });
+
+            // Respond back with our own deviceMeta so the joining peer also discovers this host!
+            if (!parsed.isResponse) {
+              try {
+                conn.send(JSON.stringify({
+                  type: 'peer-handshake',
+                  isResponse: true,
+                  peerId: this.peerId,
+                  deviceMeta: this.deviceMeta
+                }));
+              } catch (e) {}
+            }
             return;
           }
           if (parsed.type === 'device-rename') {

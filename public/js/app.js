@@ -248,6 +248,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (roomCodeInput) {
+    roomCodeInput.addEventListener('input', (e) => {
+      // Filter out any non-digit characters for 6-digit room code input
+      e.target.value = e.target.value.replace(/\D/g, '');
+      if (e.target.value.length === 6 && btnJoinRoom) {
+        btnJoinRoom.click();
+      }
+    });
+
     roomCodeInput.addEventListener('keyup', (e) => {
       if (e.key === 'Enter' && btnJoinRoom) {
         btnJoinRoom.click();
