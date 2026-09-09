@@ -6,8 +6,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initialize Lucide icons
   lucide.createIcons();
 
-  // Socket.io connection (Optional on Vercel)
-  const socket = typeof io !== 'undefined' ? io({ reconnection: true, autoConnect: true }) : null;
+  // Socket.io connection (Optional on Vercel serverless)
+  let socket = null;
+  if (typeof io !== 'undefined') {
+    try {
+      socket = io({
+        reconnection: true,
+        reconnectionAttempts: 2,
+        timeout: 2000,
+        autoConnect: true
+      });
+    } catch (e) {
+      console.warn('Socket.io client optional:', e);
+    }
+  }
 
   // App State
   let currentRoomId = '';
