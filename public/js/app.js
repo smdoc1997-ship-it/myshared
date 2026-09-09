@@ -59,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const networkIpText = document.getElementById('networkIpText');
   const currentRoomCode = document.getElementById('currentRoomCode');
   const connectionStatusDot = document.getElementById('connectionStatusDot');
+  const roomJoinInputGroup = document.getElementById('roomJoinInputGroup');
   const roomCodeInput = document.getElementById('roomCodeInput');
   const btnJoinRoom = document.getElementById('btnJoinRoom');
   const btnCreateRoom = document.getElementById('btnCreateRoom');
@@ -663,8 +664,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     newUrl.searchParams.set('room', roomId);
     window.history.pushState({}, '', newUrl);
   }
-
-  const roomJoinInputGroup = document.getElementById('roomJoinInputGroup');
 
   function updateRoomStateUI(isJoined) {
     if (roomJoinInputGroup) roomJoinInputGroup.style.display = isJoined ? 'none' : 'inline-flex';
