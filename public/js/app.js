@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let peers = []; // list of connected peers in current room
   let fileQueue = []; // files selected for upload
   let historyItems = []; // completed transfers
+  let html5QrCodeScanner = null; // Camera QR code scanner instance
 
   // System & Browser Info Detection (with localStorage custom name persistence)
   const deviceInfo = detectDeviceDetails();
@@ -57,6 +58,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnCopyLink = document.getElementById('btnCopyLink');
   const btnLeaveRoom = document.getElementById('btnLeaveRoom');
   const btnShowQr = document.getElementById('btnShowQr');
+  const btnOpenScanCamera = document.getElementById('btnOpenScanCamera');
   
   const peerCount = document.getElementById('peerCount');
   const devicesGrid = document.getElementById('devicesGrid');
@@ -100,6 +102,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnSaveDeviceName = document.getElementById('btnSaveDeviceName');
   const deviceNameInput = document.getElementById('deviceNameInput');
 
+  const cameraQrModal = document.getElementById('cameraQrModal');
+  const btnCloseCameraQr = document.getElementById('btnCloseCameraQr');
+  const btnStopCameraScan = document.getElementById('btnStopCameraScan');
+
   // Update Self Device UI
   updateSelfDeviceUI();
 
@@ -123,7 +129,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     socket.on('disconnect', (reason) => {
       console.log('[Socket] Disconnected:', reason);
-      // Keep online status green if PeerJS is active
       if (!webrtcManager.peer) {
         connectionStatusDot.classList.remove('online');
       }
@@ -136,6 +141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       connectionStatusDot.classList.add('online');
       localStorage.setItem('airshare_current_room', roomId);
       updatePeersUI(roomPeers);
+      updateRoomStateUI(true);
     });
 
     socket.on('room-peers', (roomPeers) => {
@@ -266,6 +272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectionStatusDot.classList.remove('online');
     peers = [];
     updatePeersUI([]);
+    updateRoomStateUI(false);
     showToast('Left room and disconnected.');
   });
 
@@ -286,6 +293,72 @@ document.addEventListener('DOMContentLoaded', async () => {
     previewModal.classList.remove('active');
     previewBody.innerHTML = '';
   });
+
+  // Camera QR Code Scanner Event Handlers
+  if (btnOpenScanCamera) {
+    btnOpenScanCamera.addEventListener('click', () => startCameraQrScanner());
+  }
+
+  if (btnCloseCameraQr) btnCloseCameraQr.addEventListener('click', () => stopCameraQrScanner());
+  if (btnStopCameraScan) btnStopCameraScan.addEventListener('click', () => stopCameraQrScanner());
+
+  // Camera QR Scanner Controller
+  async function startCameraQrScanner() {
+    if (typeof Html5Qrcode === 'undefined') {
+      alert('Camera QR scanner library loading. Please try again in a moment.');
+      return;
+    }
+
+    cameraQrModal.classList.add('active');
+
+    try {
+      if (html5QrCodeScanner) {
+        await stopCameraQrScanner();
+      }
+
+      html5QrCodeScanner = new Html5Qrcode("cameraQrReader");
+      await html5QrCodeScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          console.log('[Camera QR Scan] Decoded:', decodedText);
+          let scannedRoomCode = '';
+          if (decodedText.includes('room=')) {
+            try {
+              const urlObj = new URL(decodedText);
+              scannedRoomCode = urlObj.searchParams.get('room');
+            } catch (e) {
+              const match = decodedText.match(/room=(\d{6})/);
+              if (match) scannedRoomCode = match[1];
+            }
+          } else if (decodedText.trim().length === 6 && /^\d+$/.test(decodedText.trim())) {
+            scannedRoomCode = decodedText.trim();
+          }
+
+          if (scannedRoomCode) {
+            stopCameraQrScanner();
+            joinRoom(scannedRoomCode);
+            showToast(`Joined room ${scannedRoomCode} via Camera QR scan!`);
+          }
+        },
+        () => {}
+      );
+    } catch (err) {
+      console.warn('Camera scanner error:', err);
+      showToast('Camera access denied or unavailable.');
+    }
+  }
+
+  async function stopCameraQrScanner() {
+    if (html5QrCodeScanner) {
+      try {
+        await html5QrCodeScanner.stop();
+        html5QrCodeScanner.clear();
+      } catch (e) {}
+      html5QrCodeScanner = null;
+    }
+    cameraQrModal.classList.remove('active');
+  }
 
   // Device Rename Event Handlers
   if (btnEditDeviceName) {
@@ -472,7 +545,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     activeRelayOutgoings.delete(transferId);
   }
 
-  // Handle Received File (Trigger Download + Persistent History log)
+  // Handle Received File
   function handleReceivedFile({ transferId, name, size, mimeType, blob }) {
     const url = URL.createObjectURL(blob);
     
@@ -532,9 +605,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       connectionStatusDot.classList.add('online');
     });
 
+    updateRoomStateUI(true);
+
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', roomId);
     window.history.pushState({}, '', newUrl);
+  }
+
+  function updateRoomStateUI(isJoined) {
+    if (btnLeaveRoom) btnLeaveRoom.style.display = isJoined ? 'inline-flex' : 'none';
+    if (btnCopyLink) btnCopyLink.style.display = isJoined ? 'inline-flex' : 'none';
+    if (btnShowQr) btnShowQr.style.display = isJoined ? 'inline-flex' : 'none';
   }
 
   function updateSelfDeviceUI() {
