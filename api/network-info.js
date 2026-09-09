@@ -17,14 +17,16 @@ module.exports = (req, res) => {
   const protocol = req.headers['x-forwarded-proto'] || 'http';
   const fullUrl = `${protocol}://${host}`;
   const localIp = getLocalIpAddress();
+  const isVercel = !!process.env.VERCEL || host.includes('vercel.app');
 
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.status(200).json({
     localIp,
     host,
+    port: isVercel ? null : 3000,
     lanUrl: fullUrl,
     localhostUrl: fullUrl,
-    isVercel: !!process.env.VERCEL
+    isVercel
   });
 };

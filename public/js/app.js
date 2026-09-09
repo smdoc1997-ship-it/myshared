@@ -693,9 +693,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const res = await fetch('/api/network-info');
       networkInfo = await res.json();
-      networkIpText.textContent = `LAN IP: ${networkInfo.localIp}:${networkInfo.port}`;
+      if (networkInfo.isVercel || window.location.hostname.includes('vercel.app')) {
+        networkIpText.textContent = `Vercel Cloud Server`;
+      } else if (networkInfo.port) {
+        networkIpText.textContent = `LAN IP: ${networkInfo.localIp}:${networkInfo.port}`;
+      } else {
+        networkIpText.textContent = `Server: ${networkInfo.host || window.location.hostname}`;
+      }
     } catch (err) {
-      networkIpText.textContent = 'Local Network Server';
+      networkIpText.textContent = 'AirShare Online';
     }
   }
 
