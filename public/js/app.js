@@ -1085,7 +1085,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  function showToast(msg) {
+  function showToast(msg, type = 'info') {
+    // 1. Toastr.js Integration if loaded
+    if (typeof toastr !== 'undefined') {
+      try {
+        toastr.options = {
+          closeButton: true,
+          progressBar: true,
+          positionClass: "toast-bottom-right",
+          timeOut: 3500
+        };
+        if (type === 'success') toastr.success(msg);
+        else if (type === 'error') toastr.error(msg);
+        else if (type === 'warning') toastr.warning(msg);
+        else toastr.info(msg);
+      } catch (e) {}
+    }
+
+    // 2. AirShare Custom Glassmorphism Toast Notification
     let toast = document.createElement('div');
     toast.className = 'toast-notification';
     toast.style.cssText = `
@@ -1098,7 +1115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       padding: 12px 24px;
       border-radius: 12px;
       box-shadow: 0 10px 30px rgba(0, 242, 254, 0.4);
-      z-index: 2000;
+      z-index: 9999;
       transition: all 0.3s ease;
     `;
     toast.textContent = msg;
