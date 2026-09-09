@@ -207,9 +207,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   btnCreateRoom.addEventListener('click', async () => {
-    const res = await fetch('/api/room/new');
-    const data = await res.json();
-    joinRoom(data.roomId);
+    try {
+      const res = await fetch('/api/room/new');
+      const data = await res.json();
+      if (data && data.roomId) {
+        joinRoom(data.roomId);
+        return;
+      }
+    } catch (err) {
+      console.warn('Backend room API fallback:', err);
+    }
+    // Fallback: generate local 6-digit room code if backend fetch fails
+    const localCode = Math.floor(100000 + Math.random() * 900000).toString();
+    joinRoom(localCode);
   });
 
   btnCopyLink.addEventListener('click', () => {
@@ -713,9 +723,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const res = await fetch(`/api/qr-code?url=${encodeURIComponent(targetUrl)}`);
       const data = await res.json();
-      qrCodeImg.src = data.qrDataUrl;
+      if (data && data.qrDataUrl) {
+        qrCodeImg.src = data.qrDataUrl;
+      } else {
+        throw new Error('No QR data URL');
+      }
     } catch (err) {
-      console.error('Failed to load QR Code', err);
+      console.warn('Backend QR API fallback, using public QR generator:', err);
+      qrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(targetUrl)}`;
     }
 
     qrModal.classList.add('active');

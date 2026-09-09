@@ -1,15 +1,9 @@
 {
   "version": 2,
-  "name": "airshare",
-  "cleanUrls": true,
-  "builds": [
-    { "src": "api/**/*.js", "use": "@vercel/node" },
-    { "src": "public/**/*", "use": "@vercel/static" }
-  ],
-  "routes": [
-    { "src": "/api/network-info", "dest": "/api/network-info.js" },
-    { "src": "/api/qr-code", "dest": "/api/qr-code.js" },
-    { "src": "/api/room/new", "dest": "/api/room/new.js" },
-    { "src": "/(.*)", "dest": "/public/$1" }
+  "rewrites": [
+    { "source": "/api/network-info", "destination": "/api/network-info.js" },
+    { "source": "/api/qr-code", "destination": "/api/qr-code.js" },
+    { "source": "/api/room/new", "destination": "/api/room/new.js" },
+    { "source": "/(.*)", "destination": "/public/$1" }
   ]
 }
