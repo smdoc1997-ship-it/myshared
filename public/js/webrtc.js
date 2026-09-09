@@ -14,6 +14,7 @@ class WebRTCManager {
     this.peerConnections = new Map(); // targetSocketId -> RTCPeerConnection
     this.dataChannels = new Map();    // targetSocketId -> RTCDataChannel
     this.peerJsConns = new Map();     // peerId -> DataConnection
+    this.knownPeerMetas = new Map();  // peerId -> deviceMeta
     
     // Track incoming file buffer streams
     this.incomingTransfers = new Map();
@@ -31,25 +32,46 @@ class WebRTCManager {
 
     this.peer = null;
     this.peerId = '';
+    this.deviceMeta = null;
   }
 
   // Initialize PeerJS for Vercel / Cloud Serverless P2P Signaling
   initPeerJs(roomId, deviceMeta, onPeerReady) {
     if (typeof Peer === 'undefined') return;
 
-    // Unique Peer ID incorporating room code
-    const uniqueSuffix = Math.random().toString(36).substring(2, 7);
-    this.peerId = `airshare-${roomId}-${uniqueSuffix}`;
+    this.deviceMeta = deviceMeta;
+    const hostId = `airshare-room-${roomId}`;
+    const uniqueId = `airshare-room-${roomId}-${Math.random().toString(36).substring(2, 7)}`;
 
+    // Try becoming Room Host first
+    this.createPeerInstance(hostId, deviceMeta, onPeerReady, () => {
+      // If host ID is taken, register as secondary peer and connect to host!
+      console.log('[PeerJS] Host ID taken. Joining room host:', hostId);
+      this.createPeerInstance(uniqueId, deviceMeta, onPeerReady, null, hostId);
+    });
+  }
+
+  createPeerInstance(id, deviceMeta, onPeerReady, onErrorTaken, targetHostId = null) {
     try {
-      this.peer = new Peer(this.peerId, {
+      if (this.peer) {
+        this.peer.destroy();
+      }
+
+      this.peerId = id;
+      this.peer = new Peer(id, {
         debug: 1,
         config: { iceServers: this.iceServers }
       });
 
-      this.peer.on('open', (id) => {
-        console.log('[PeerJS] Registered with ID:', id);
-        if (onPeerReady) onPeerReady(id);
+      this.peer.on('open', (assignedId) => {
+        console.log('[PeerJS] Registered with ID:', assignedId);
+        if (onPeerReady) onPeerReady(assignedId);
+
+        // If secondary peer, connect to host immediately
+        if (targetHostId) {
+          const conn = this.peer.connect(targetHostId, { reliable: true });
+          this.setupPeerJsDataConnection(conn);
+        }
       });
 
       this.peer.on('connection', (conn) => {
@@ -59,23 +81,51 @@ class WebRTCManager {
 
       this.peer.on('error', (err) => {
         console.warn('[PeerJS Error]:', err.type, err.message);
+        if (err.type === 'unavailable-id' && onErrorTaken) {
+          onErrorTaken();
+        }
       });
     } catch (err) {
-      console.warn('PeerJS init fallback:', err);
+      console.warn('PeerJS init error:', err);
     }
   }
 
   setupPeerJsDataConnection(conn) {
     conn.on('open', () => {
       this.peerJsConns.set(conn.peer, conn);
+      
+      // Send handshake with device details
+      conn.send(JSON.stringify({
+        type: 'peer-handshake',
+        peerId: this.peerId,
+        deviceMeta: this.deviceMeta
+      }));
     });
 
     conn.on('data', (data) => {
+      if (typeof data === 'string') {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.type === 'peer-handshake') {
+            this.knownPeerMetas.set(conn.peer, parsed.deviceMeta);
+            this.onPeerDiscovered({
+              socketId: conn.peer,
+              peerId: conn.peer,
+              deviceName: parsed.deviceMeta.deviceName,
+              deviceType: parsed.deviceMeta.deviceType,
+              osName: parsed.deviceMeta.osName,
+              browserName: parsed.deviceMeta.browserName
+            });
+            return;
+          }
+        } catch (e) {}
+      }
       this.handleIncomingDataChannelMessage(conn.peer, data);
     });
 
     conn.on('close', () => {
       this.peerJsConns.delete(conn.peer);
+      this.knownPeerMetas.delete(conn.peer);
     });
   }
 
@@ -93,7 +143,6 @@ class WebRTCManager {
     });
   }
 
-  // Create or get existing RTCPeerConnection for a given peer socket ID
   createPeerConnection(targetSocketId) {
     if (this.peerConnections.has(targetSocketId)) {
       return this.peerConnections.get(targetSocketId);
@@ -116,7 +165,6 @@ class WebRTCManager {
     };
 
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] Connection state with ${targetSocketId}: ${pc.connectionState}`);
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         this.dataChannels.delete(targetSocketId);
       }
@@ -126,13 +174,13 @@ class WebRTCManager {
     return pc;
   }
 
-  // Initiate WebRTC offer to target peer
   async connectToPeer(targetSocketId) {
-    if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') {
-      return this.dataChannels.get(targetSocketId);
+    // 1. Check if existing PeerJS connection open
+    if (this.peerJsConns.has(targetSocketId)) {
+      return this.peerJsConns.get(targetSocketId);
     }
 
-    // Try PeerJS connection if target looks like PeerJS ID
+    // 2. Check if direct PeerJS ID
     if (targetSocketId.startsWith('airshare-') && this.peer) {
       const conn = this.peer.connect(targetSocketId, { reliable: true });
       return new Promise((resolve) => {
@@ -140,8 +188,13 @@ class WebRTCManager {
           this.setupPeerJsDataConnection(conn);
           resolve(conn);
         });
-        setTimeout(() => resolve(null), 5000);
+        setTimeout(() => resolve(null), 4000);
       });
+    }
+
+    // 3. WebRTC DataChannel via Socket.io
+    if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') {
+      return this.dataChannels.get(targetSocketId);
     }
 
     if (!this.socket) return null;
@@ -161,7 +214,7 @@ class WebRTCManager {
         if (dataChannel.readyState !== 'open') {
           resolve(null);
         }
-      }, 5000);
+      }, 4000);
 
       dataChannel.onopen = () => {
         clearTimeout(timeout);
@@ -239,11 +292,12 @@ class WebRTCManager {
       } catch (err) {
         console.error('Failed to parse WebRTC text message:', err);
       }
-    } else if (data instanceof ArrayBuffer) {
+    } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
+      const arrayBuffer = data instanceof Uint8Array ? data.buffer : data;
       const headerLength = 36;
       const textDecoder = new TextDecoder();
-      const transferId = textDecoder.decode(data.slice(0, headerLength)).trim();
-      const chunkData = data.slice(headerLength);
+      const transferId = textDecoder.decode(arrayBuffer.slice(0, headerLength)).trim();
+      const chunkData = arrayBuffer.slice(headerLength);
 
       const transfer = this.incomingTransfers.get(transferId);
       if (!transfer) return;
@@ -284,7 +338,7 @@ class WebRTCManager {
 
   async sendFileP2P(targetSocketId, file, transferId) {
     const dataChannel = await this.connectToPeer(targetSocketId);
-    if (!dataChannel || (dataChannel.readyState && dataChannel.readyState !== 'open')) {
+    if (!dataChannel || (dataChannel.readyState && dataChannel.readyState !== 'open' && !dataChannel.send)) {
       return false;
     }
 

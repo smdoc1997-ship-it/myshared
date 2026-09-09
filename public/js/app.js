@@ -26,7 +26,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     onProgress: (transferId, stats) => updateTransferProgressUI(transferId, stats),
     onComplete: (transferId) => completeTransferUI(transferId),
     onError: (transferId, errorMsg) => errorTransferUI(transferId, errorMsg),
-    onFileReceived: (fileData) => handleReceivedFile(fileData)
+    onFileReceived: (fileData) => handleReceivedFile(fileData),
+    onPeerDiscovered: (peerData) => handleDiscoveredPeer(peerData)
   });
 
   // System & Browser Info Detection
@@ -404,6 +405,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderHistoryUI();
 
     showToast(`Received file: ${name}`);
+  }
+
+  function handleDiscoveredPeer(peerData) {
+    if (!peers.some(p => p.socketId === peerData.socketId)) {
+      peers.push(peerData);
+      updatePeersUI(peers);
+      showToast(`Device connected: ${peerData.deviceName}`);
+    }
   }
 
   // UI Helpers & Renderers
