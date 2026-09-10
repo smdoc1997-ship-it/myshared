@@ -388,7 +388,7 @@ body {
 /* Connected Devices Grid */
 .devices-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
 }
 
@@ -491,6 +491,10 @@ body {
   text-transform: uppercase;
   flex-shrink: 0;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.03em;
 }
 
 .self-badge {

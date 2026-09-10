@@ -910,7 +910,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           </div>
         </div>
         <div class="transfer-right-group">
-          <span class="badge ${type === 'sending' ? 'self-badge' : 'peer-badge'}">${type.toUpperCase()}</span>
+          <span class="badge ${type === 'sending' ? 'self-badge' : 'peer-badge'}" id="type-badge-${transferId}" data-type="${type}">${type.toUpperCase()}</span>
           <div class="transfer-actions" id="actions-${transferId}">
             <button class="btn-icon-subtle btn-pause" onclick="togglePauseTransfer('${transferId}')" title="Pause / Resume Transfer">
               <i data-lucide="pause" id="icon-pause-${transferId}"></i>
@@ -963,11 +963,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       const bar = document.getElementById(`bar-${transferId}`);
       const pct = document.getElementById(`pct-${transferId}`);
       const actions = document.getElementById(`actions-${transferId}`);
+      const typeBadge = document.getElementById(`type-badge-${transferId}`);
 
       if (bar) bar.style.width = '100%';
       if (pct) pct.textContent = '100%';
       if (speed) speed.textContent = 'Completed';
       if (actions) actions.style.display = 'none';
+      if (typeBadge) {
+        const initialType = typeBadge.getAttribute('data-type') || '';
+        const isSending = initialType === 'sending' || typeBadge.textContent.trim().toUpperCase().includes('SEND');
+        typeBadge.textContent = isSending ? 'SENT' : 'RECEIVED';
+        typeBadge.className = 'badge peer-badge';
+      }
     }
     updateActiveCountUI();
   }
