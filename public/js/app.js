@@ -157,6 +157,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     socket.on('room-peers', (roomPeers) => {
       updatePeersUI(roomPeers);
     });
+
+    socket.on('peer-left', ({ socketId }) => {
+      console.log('[Socket] Peer left room:', socketId);
+      webrtcManager.removePeer(socketId);
+      peers = peers.filter(p => p.socketId !== socketId && p.peerId !== socketId);
+      updatePeersUI(peers);
+    });
   }
 
   // Socket.io Relayed File Transfer Events (Fallback Engine)

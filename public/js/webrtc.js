@@ -292,9 +292,33 @@ class WebRTCManager {
     if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') return;
     if (this.peerJsConns.has(targetSocketId)) return;
 
+    // Deterministic offer initiation rule to prevent WebRTC offer glare (collisions):
+    // Only initiate offer if selfSocketId < targetSocketId; otherwise wait for remote offer.
+    if (this.socket && this.socket.id && this.socket.id > targetSocketId) {
+      return;
+    }
+
     this.connectToPeer(targetSocketId).catch(err => {
       console.log('[WebRTC Pre-warm] Background connection attempt:', targetSocketId, err?.message || err);
     });
+  }
+
+  // Remove disconnected peer connections cleanly
+  removePeer(targetSocketId) {
+    if (this.dataChannels.has(targetSocketId)) {
+      try { this.dataChannels.get(targetSocketId).close(); } catch (e) {}
+      this.dataChannels.delete(targetSocketId);
+    }
+    if (this.peerConnections.has(targetSocketId)) {
+      try { this.peerConnections.get(targetSocketId).close(); } catch (e) {}
+      this.peerConnections.delete(targetSocketId);
+    }
+    if (this.peerJsConns.has(targetSocketId)) {
+      try { this.peerJsConns.get(targetSocketId).close(); } catch (e) {}
+      this.peerJsConns.delete(targetSocketId);
+    }
+    this.knownPeerMetas.delete(targetSocketId);
+    this.iceCandidatesQueue.delete(targetSocketId);
   }
 
   async connectToPeer(targetSocketId) {
@@ -345,6 +369,14 @@ class WebRTCManager {
 
   async handleOffer(senderSocketId, offer) {
     const pc = this.createPeerConnection(senderSocketId);
+
+    // Perfect Negotiation rollback on offer collision
+    if (pc.signalingState !== 'stable') {
+      try {
+        await pc.setLocalDescription({ type: 'rollback' });
+      } catch (e) {}
+    }
+
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     await this.drainIceCandidateQueue(senderSocketId, pc);
 
