@@ -84,7 +84,7 @@ io.on('connection', (socket) => {
   let currentRoom = null;
   let peerInfo = null;
 
-  socket.on('join-room', ({ roomId, deviceName, deviceType, osName, browserName }) => {
+  socket.on('join-room', ({ roomId, deviceId, deviceName, deviceType, osName, browserName }) => {
     if (!roomId) return;
 
     // Leave previous room if any
@@ -104,6 +104,7 @@ io.on('connection', (socket) => {
 
     peerInfo = {
       socketId: socket.id,
+      deviceId: deviceId || socket.id,
       deviceName: deviceName || 'Anonymous Device',
       deviceType: deviceType || 'desktop',
       osName: osName || 'Unknown OS',
@@ -114,15 +115,24 @@ io.on('connection', (socket) => {
     if (!rooms.has(roomId)) {
       rooms.set(roomId, new Map());
     }
-    rooms.get(roomId).set(socket.id, peerInfo);
+
+    const roomMap = rooms.get(roomId);
+    if (deviceId) {
+      for (const [existingSocketId, existingInfo] of roomMap.entries()) {
+        if (existingInfo.deviceId === deviceId || existingSocketId === socket.id) {
+          roomMap.delete(existingSocketId);
+        }
+      }
+    }
+    roomMap.set(socket.id, peerInfo);
 
     // Notify room of all current peers & send user-joined event
-    const activePeers = Array.from(rooms.get(roomId).values());
+    const activePeers = Array.from(roomMap.values());
     socket.to(roomId).emit('user-joined', peerInfo);
     io.to(roomId).emit('room-peers', activePeers);
     socket.emit('joined-room-success', { roomId, selfId: socket.id, peers: activePeers });
 
-    console.log(`[JOIN] Device ${peerInfo.deviceName} (${socket.id}) joined room ${roomId}`);
+    console.log(`[JOIN] Device ${peerInfo.deviceName} (${socket.id}, deviceId: ${peerInfo.deviceId}) joined room ${roomId}`);
   });
 
   // WebRTC Signaling

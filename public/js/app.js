@@ -686,7 +686,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function handleDiscoveredPeer(peerData) {
-    const existing = peers.find(p => p.socketId === peerData.socketId || p.socketId === peerData.peerId || (p.peerId && p.peerId === peerData.peerId));
+    const existing = peers.find(p =>
+      (p.deviceId && peerData.deviceId && p.deviceId === peerData.deviceId) ||
+      p.socketId === peerData.socketId ||
+      p.socketId === peerData.peerId ||
+      (p.peerId && p.peerId === peerData.peerId)
+    );
     if (existing) {
       existing.deviceName = peerData.deviceName || existing.deviceName;
       existing.deviceType = peerData.deviceType || existing.deviceType;
@@ -733,6 +738,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (socket && socket.connected) {
       socket.emit('join-room', {
         roomId,
+        deviceId: deviceInfo.deviceId,
         deviceName: deviceInfo.deviceName,
         deviceType: deviceInfo.deviceType,
         osName: deviceInfo.osName,
@@ -767,7 +773,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function updatePeersUI(roomPeers) {
     peers = roomPeers;
-    const otherPeers = peers.filter(p => p.socketId !== selfSocketId && p.socketId !== webrtcManager.peerId);
+
+    // Filter out self and de-duplicate peers by deviceId or composite identity key
+    const uniquePeersMap = new Map();
+    peers.forEach(p => {
+      const isSelf = (p.deviceId && p.deviceId === deviceInfo.deviceId) ||
+                     p.socketId === selfSocketId ||
+                     p.socketId === webrtcManager.peerId ||
+                     p.peerId === webrtcManager.peerId;
+      if (!isSelf) {
+        const uniqueKey = p.deviceId || p.socketId || `${p.deviceName}_${p.osName}_${p.browserName}`;
+        uniquePeersMap.set(uniqueKey, p);
+      }
+    });
+
+    const otherPeers = Array.from(uniquePeersMap.values());
     peerCount.textContent = otherPeers.length + 1;
 
     devicesGrid.innerHTML = '';
@@ -1193,9 +1213,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ua.indexOf('Firefox') !== -1) browserName = 'Firefox';
     if (ua.indexOf('Edg') !== -1) browserName = 'Edge';
 
+    let deviceId = localStorage.getItem('airshare_device_id');
+    if (!deviceId) {
+      deviceId = `dev_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+      localStorage.setItem('airshare_device_id', deviceId);
+    }
+
     const customName = localStorage.getItem('airshare_device_name');
     const deviceName = customName || `${osName} ${deviceType === 'mobile' ? 'Phone' : 'Device'}`;
-    return { deviceType, osName, browserName, deviceName };
+    return { deviceId, deviceType, osName, browserName, deviceName };
   }
 
   function getDeviceIcon(type) {

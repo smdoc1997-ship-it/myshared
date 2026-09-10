@@ -487,6 +487,7 @@ class WebRTCManager {
           this.onPeerDiscovered({
             socketId: senderSocketId,
             peerId: senderSocketId,
+            deviceId: meta.deviceId || senderSocketId,
             deviceName: meta.deviceName || 'Connected Device',
             deviceType: meta.deviceType || 'desktop',
             osName: meta.osName || 'Unknown OS',
