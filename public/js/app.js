@@ -129,10 +129,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (socket) {
     socket.on('connect', () => {
       selfSocketId = socket.id;
-      connectionStatusDot.classList.add('online');
+      if (connectionStatusDot) connectionStatusDot.classList.add('online');
       console.log('[Socket] Connected with ID:', socket.id);
-      if (currentRoomId) {
-        joinRoom(currentRoomId);
+      const activeRoom = sessionStorage.getItem('airshare_active_room') || localStorage.getItem('airshare_current_room') || currentRoomId;
+      if (activeRoom && activeRoom.length === 6) {
+        joinRoom(activeRoom);
       }
     });
 
@@ -286,6 +287,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         socket.emit('leave-room');
       }
       webrtcManager.disconnectAll();
+      sessionStorage.removeItem('airshare_active_room');
       localStorage.removeItem('airshare_current_room');
       currentRoomId = '';
       if (currentRoomCode) currentRoomCode.textContent = '------';
@@ -662,6 +664,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // UI Helpers & Renderers
   function joinRoom(roomId) {
+    if (!roomId) return;
+
     // If switching from an existing room, disconnect previous peer connections cleanly
     if (currentRoomId && currentRoomId !== roomId) {
       if (socket && socket.connected) {
@@ -675,6 +679,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (qrRoomCodeDisplay) qrRoomCodeDisplay.textContent = roomId;
     if (roomCodeInput) roomCodeInput.value = '';
     if (connectionStatusDot) connectionStatusDot.classList.add('online');
+    sessionStorage.setItem('airshare_active_room', roomId);
     localStorage.setItem('airshare_current_room', roomId);
 
     if (socket && socket.connected) {
@@ -745,8 +750,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
-    // Render connected peers
+    // Render connected peers & pre-warm P2P DataChannels
     otherPeers.forEach(peer => {
+      const targetId = peer.socketId || peer.peerId;
+      if (targetId) {
+        webrtcManager.prewarmConnection(targetId);
+      }
+
       const peerDiv = document.createElement('div');
       peerDiv.className = 'device-item';
       peerDiv.innerHTML = `
@@ -758,7 +768,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <span class="badge peer-badge">CONNECTED</span>
       `;
       peerDiv.addEventListener('click', () => {
-        targetPeerSelect.value = peer.socketId || peer.peerId;
+        targetPeerSelect.value = targetId;
       });
       devicesGrid.appendChild(peerDiv);
     });
@@ -1087,11 +1097,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   function checkUrlParamsAndJoinRoom() {
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
+    const sessionRoom = sessionStorage.getItem('airshare_active_room');
+    const localRoom = localStorage.getItem('airshare_current_room');
 
-    if (roomParam && roomParam.length === 6) {
-      joinRoom(roomParam);
+    const targetRoom = (roomParam && roomParam.length === 6) ? roomParam :
+                       (sessionRoom && sessionRoom.length === 6) ? sessionRoom :
+                       (localRoom && localRoom.length === 6) ? localRoom : null;
+
+    if (targetRoom) {
+      joinRoom(targetRoom);
     } else {
-      // Start in clean Unjoined State unless explicit room URL parameter is passed
       updateRoomStateUI(false);
     }
   }

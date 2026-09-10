@@ -201,18 +201,26 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Disconnect handling
+  // Disconnect handling with 1.5s grace period to allow page refreshes without flickering peers
   socket.on('disconnect', () => {
-    if (currentRoom && rooms.has(currentRoom)) {
-      rooms.get(currentRoom).delete(socket.id);
-      if (rooms.get(currentRoom).size === 0) {
-        rooms.delete(currentRoom);
-      } else {
-        io.to(currentRoom).emit('peer-left', { socketId: socket.id });
-        io.to(currentRoom).emit('room-peers', Array.from(rooms.get(currentRoom).values()));
+    const roomToClean = currentRoom;
+    const socketIdToClean = socket.id;
+
+    setTimeout(() => {
+      if (roomToClean && rooms.has(roomToClean)) {
+        const roomMap = rooms.get(roomToClean);
+        if (roomMap.has(socketIdToClean)) {
+          roomMap.delete(socketIdToClean);
+          if (roomMap.size === 0) {
+            rooms.delete(roomToClean);
+          } else {
+            io.to(roomToClean).emit('peer-left', { socketId: socketIdToClean });
+            io.to(roomToClean).emit('room-peers', Array.from(roomMap.values()));
+          }
+        }
       }
-    }
-    console.log(`[DISCONNECT] Socket ${socket.id} left`);
+      console.log(`[DISCONNECT] Socket ${socketIdToClean} cleaned up from room ${roomToClean}`);
+    }, 1500);
   });
 });
 

@@ -17,6 +17,7 @@ class WebRTCManager {
     this.dataChannels = new Map();    // targetSocketId -> RTCDataChannel
     this.peerJsConns = new Map();     // peerId -> DataConnection
     this.knownPeerMetas = new Map();  // peerId -> deviceMeta
+    this.iceCandidatesQueue = new Map(); // targetSocketId -> Array of RTCIceCandidate
     
     // Track incoming file buffer streams
     this.incomingTransfers = new Map();
@@ -28,23 +29,7 @@ class WebRTCManager {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
-      { urls: 'stun:stun.relay.metered.ca:80' },
       { urls: 'stun:global.stun.twilio.com:3478' },
-      {
-        urls: 'turn:global.relay.metered.ca:80',
-        username: 'e0d9b4b0e5bfb7c4e5b7',
-        credential: 'openrelaypassword'
-      },
-      {
-        urls: 'turn:global.relay.metered.ca:443',
-        username: 'e0d9b4b0e5bfb7c4e5b7',
-        credential: 'openrelaypassword'
-      },
-      {
-        urls: 'turn:global.relay.metered.ca:443?transport=tcp',
-        username: 'e0d9b4b0e5bfb7c4e5b7',
-        credential: 'openrelaypassword'
-      },
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -245,6 +230,7 @@ class WebRTCManager {
       try { pc.close(); } catch (e) {}
     });
     this.peerConnections.clear();
+    this.iceCandidatesQueue.clear();
 
     if (this.peer) {
       try { this.peer.destroy(); } catch (e) {}
@@ -271,7 +257,10 @@ class WebRTCManager {
       return this.peerConnections.get(targetSocketId);
     }
 
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      iceCandidatePoolSize: 10
+    });
 
     pc.onicecandidate = (event) => {
       if (event.candidate && this.socket) {
@@ -295,6 +284,17 @@ class WebRTCManager {
 
     this.peerConnections.set(targetSocketId, pc);
     return pc;
+  }
+
+  // Pre-warm background P2P connection as soon as a peer is discovered in room
+  prewarmConnection(targetSocketId) {
+    if (!targetSocketId || targetSocketId === this.socket?.id || targetSocketId === this.peerId) return;
+    if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') return;
+    if (this.peerJsConns.has(targetSocketId)) return;
+
+    this.connectToPeer(targetSocketId).catch(err => {
+      console.log('[WebRTC Pre-warm] Background connection attempt:', targetSocketId, err?.message || err);
+    });
   }
 
   async connectToPeer(targetSocketId) {
@@ -346,6 +346,8 @@ class WebRTCManager {
   async handleOffer(senderSocketId, offer) {
     const pc = this.createPeerConnection(senderSocketId);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    await this.drainIceCandidateQueue(senderSocketId, pc);
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
@@ -361,13 +363,38 @@ class WebRTCManager {
     const pc = this.peerConnections.get(senderSocketId);
     if (pc) {
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      await this.drainIceCandidateQueue(senderSocketId, pc);
     }
   }
 
   async handleIceCandidate(senderSocketId, candidate) {
     const pc = this.peerConnections.get(senderSocketId);
-    if (pc && pc.remoteDescription) {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.warn(`[ICE Candidate Error] ${senderSocketId}:`, e);
+      }
+    } else {
+      if (!this.iceCandidatesQueue.has(senderSocketId)) {
+        this.iceCandidatesQueue.set(senderSocketId, []);
+      }
+      this.iceCandidatesQueue.get(senderSocketId).push(candidate);
+    }
+  }
+
+  async drainIceCandidateQueue(senderSocketId, pc) {
+    const queue = this.iceCandidatesQueue.get(senderSocketId);
+    if (queue && queue.length > 0) {
+      while (queue.length > 0) {
+        const candidate = queue.shift();
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.warn(`[Drain ICE Error] ${senderSocketId}:`, e);
+        }
+      }
+      this.iceCandidatesQueue.delete(senderSocketId);
     }
   }
 
