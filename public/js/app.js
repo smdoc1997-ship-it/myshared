@@ -831,15 +831,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       peerDiv.innerHTML = `
         <div class="device-icon"><i data-lucide="${getDeviceIcon(peer.deviceType)}"></i></div>
         <div class="device-details">
-          <div class="device-name">${escapeHtml(peer.deviceName)}</div>
+          <div class="device-name-row">
+            <span class="device-name" title="${escapeHtml(peer.deviceName)}">${escapeHtml(peer.deviceName)}</span>
+            <button class="btn-icon-subtle" onclick="retryPeerConnection('${targetId}', event)" title="Retry P2P Connection to ${escapeHtml(peer.deviceName)}">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
           <div class="device-meta">${escapeHtml(peer.osName)} • ${escapeHtml(peer.browserName)}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <button class="btn-icon-subtle" onclick="retryPeerConnection('${targetId}', event)" title="Retry P2P Connection to ${escapeHtml(peer.deviceName)}">
-            <i data-lucide="refresh-cw"></i>
-          </button>
-          <span class="badge peer-badge">CONNECTED</span>
-        </div>
+        <span class="badge peer-badge">CONNECTED</span>
       `;
       peerDiv.addEventListener('click', () => {
         targetPeerSelect.value = targetId;
