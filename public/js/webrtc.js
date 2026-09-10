@@ -295,10 +295,10 @@ class WebRTCManager {
     });
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && this.socket) {
+      if (this.socket) {
         this.socket.emit('webrtc-ice-candidate', {
           targetSocketId,
-          candidate: event.candidate
+          candidate: event.candidate || null
         });
       }
     };
@@ -308,7 +308,20 @@ class WebRTCManager {
       this.setupDataChannelEvents(targetSocketId, channel);
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[WebRTC ICE State] ${targetSocketId}:`, pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        console.warn(`[WebRTC ICE Failed] Triggering ICE restart for ${targetSocketId}...`);
+        try {
+          pc.restartIce();
+        } catch (e) {
+          console.warn('ICE restart error:', e);
+        }
+      }
+    };
+
     pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC Connection State] ${targetSocketId}:`, pc.connectionState);
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         this.dataChannels.delete(targetSocketId);
       }
@@ -443,7 +456,7 @@ class WebRTCManager {
     const pc = this.peerConnections.get(senderSocketId);
     if (pc && pc.remoteDescription && pc.remoteDescription.type) {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        await pc.addIceCandidate(candidate ? new RTCIceCandidate(candidate) : null);
       } catch (e) {
         console.warn(`[ICE Candidate Error] ${senderSocketId}:`, e);
       }
@@ -461,7 +474,7 @@ class WebRTCManager {
       while (queue.length > 0) {
         const candidate = queue.shift();
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          await pc.addIceCandidate(candidate ? new RTCIceCandidate(candidate) : null);
         } catch (e) {
           console.warn(`[Drain ICE Error] ${senderSocketId}:`, e);
         }
