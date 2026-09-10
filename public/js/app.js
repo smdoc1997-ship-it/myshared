@@ -158,6 +158,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       updatePeersUI(roomPeers);
     });
 
+    socket.on('user-joined', (peer) => {
+      console.log('[Socket] User joined room:', peer);
+      showToast(`${peer.deviceName || 'New device'} joined the room!`);
+    });
+
     socket.on('peer-left', ({ socketId }) => {
       console.log('[Socket] Peer left room:', socketId);
       webrtcManager.removePeer(socketId);
@@ -653,11 +658,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function handleDiscoveredPeer(peerData) {
-    if (!peers.some(p => p.socketId === peerData.socketId || p.peerId === peerData.peerId)) {
+    const existing = peers.find(p => p.socketId === peerData.socketId || p.socketId === peerData.peerId || (p.peerId && p.peerId === peerData.peerId));
+    if (existing) {
+      existing.deviceName = peerData.deviceName || existing.deviceName;
+      existing.deviceType = peerData.deviceType || existing.deviceType;
+      existing.osName = peerData.osName || existing.osName;
+      existing.browserName = peerData.browserName || existing.browserName;
+      existing.p2pReady = true;
+    } else {
+      peerData.p2pReady = true;
       peers.push(peerData);
-      updatePeersUI(peers);
       showToast(`Device connected: ${peerData.deviceName}`);
     }
+    updatePeersUI(peers);
   }
 
   function handlePeerRenamed({ peerId, deviceName }) {

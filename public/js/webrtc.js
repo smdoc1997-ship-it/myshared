@@ -435,6 +435,26 @@ class WebRTCManager {
     channel.bufferedAmountLowThreshold = 256 * 1024;
     this.dataChannels.set(targetSocketId, channel);
 
+    const sendHandshake = () => {
+      try {
+        if (channel.readyState === 'open') {
+          channel.send(JSON.stringify({
+            type: 'peer-handshake',
+            peerId: this.socket?.id || this.peerId,
+            deviceMeta: this.deviceMeta
+          }));
+        }
+      } catch (e) {}
+    };
+
+    if (channel.readyState === 'open') {
+      sendHandshake();
+    } else {
+      channel.onopen = () => {
+        sendHandshake();
+      };
+    }
+
     channel.onmessage = (event) => {
       this.handleIncomingDataChannelMessage(targetSocketId, event.data);
     };
@@ -453,6 +473,19 @@ class WebRTCManager {
       try {
         const msg = JSON.parse(data);
         if (msg.type === 'ping') return;
+        if (msg.type === 'peer-handshake') {
+          const meta = msg.deviceMeta || {};
+          this.knownPeerMetas.set(senderSocketId, meta);
+          this.onPeerDiscovered({
+            socketId: senderSocketId,
+            peerId: senderSocketId,
+            deviceName: meta.deviceName || 'Connected Device',
+            deviceType: meta.deviceType || 'desktop',
+            osName: meta.osName || 'Unknown OS',
+            browserName: meta.browserName || 'Browser'
+          });
+          return;
+        }
         if (msg.type === 'device-rename') {
           this.onPeerRenamed({ peerId: senderSocketId, deviceName: msg.deviceName });
           return;

@@ -116,8 +116,9 @@ io.on('connection', (socket) => {
     }
     rooms.get(roomId).set(socket.id, peerInfo);
 
-    // Notify room of all current peers
+    // Notify room of all current peers & send user-joined event
     const activePeers = Array.from(rooms.get(roomId).values());
+    socket.to(roomId).emit('user-joined', peerInfo);
     io.to(roomId).emit('room-peers', activePeers);
     socket.emit('joined-room-success', { roomId, selfId: socket.id, peers: activePeers });
 
