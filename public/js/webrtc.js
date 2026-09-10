@@ -29,7 +29,11 @@ class WebRTCManager {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
+      { urls: 'stun:stun.services.mozilla.com:3478' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
       { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'stun:stun.voipbuster.com:3478' },
+      { urls: 'stun:stun.voipstunt.com:3478' },
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -144,7 +148,16 @@ class WebRTCManager {
       }));
     });
 
-    conn.on('data', (data) => {
+    conn.on('data', async (data) => {
+      if (typeof Blob !== 'undefined' && data instanceof Blob) {
+        try {
+          data = await data.arrayBuffer();
+        } catch (e) {
+          console.warn('[PeerJS] Failed to read Blob arrayBuffer:', e);
+          return;
+        }
+      }
+
       if (typeof data === 'string') {
         try {
           const parsed = JSON.parse(data);
@@ -157,22 +170,37 @@ class WebRTCManager {
             this.onPeerDiscovered({
               socketId: conn.peer,
               peerId: conn.peer,
+              deviceId: meta.deviceId || conn.peer,
               deviceName: meta.deviceName || 'Connected Device',
               deviceType: meta.deviceType || 'desktop',
               osName: meta.osName || 'Unknown OS',
               browserName: meta.browserName || 'Browser'
             });
 
-            // Respond back with our own deviceMeta so the joining peer also discovers this host!
+            // Respond back with our own deviceMeta & active room peer list to build full mesh
             if (!parsed.isResponse) {
               try {
                 conn.send(JSON.stringify({
                   type: 'peer-handshake',
                   isResponse: true,
                   peerId: this.peerId,
-                  deviceMeta: this.deviceMeta
+                  deviceMeta: this.deviceMeta,
+                  roomPeers: Array.from(this.knownPeerMetas.entries()).map(([pId, pMeta]) => ({
+                    peerId: pId,
+                    deviceMeta: pMeta
+                  }))
                 }));
               } catch (e) {}
+            }
+
+            // Connect to any un-connected room peers in mesh
+            if (Array.isArray(parsed.roomPeers)) {
+              parsed.roomPeers.forEach(p => {
+                if (p.peerId && p.peerId !== this.peerId && !this.peerJsConns.has(p.peerId) && this.peer) {
+                  const meshConn = this.peer.connect(p.peerId, { reliable: true });
+                  this.setupPeerJsDataConnection(meshConn);
+                }
+              });
             }
             return;
           }
@@ -476,7 +504,16 @@ class WebRTCManager {
     };
   }
 
-  handleIncomingDataChannelMessage(senderSocketId, data) {
+  async handleIncomingDataChannelMessage(senderSocketId, data) {
+    if (typeof Blob !== 'undefined' && data instanceof Blob) {
+      try {
+        data = await data.arrayBuffer();
+      } catch (e) {
+        console.warn(`[WebRTC] Failed to convert Blob payload from ${senderSocketId}:`, e);
+        return;
+      }
+    }
+
     if (typeof data === 'string') {
       try {
         const msg = JSON.parse(data);
