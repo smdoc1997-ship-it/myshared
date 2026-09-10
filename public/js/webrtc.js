@@ -141,16 +141,24 @@ class WebRTCManager {
   }
 
   setupPeerJsDataConnection(conn) {
-    conn.on('open', () => {
+    if (!conn) return;
+
+    const onOpen = () => {
       this.peerJsConns.set(conn.peer, conn);
-      
-      // Send handshake with device details
-      conn.send(JSON.stringify({
-        type: 'peer-handshake',
-        peerId: this.peerId,
-        deviceMeta: this.deviceMeta
-      }));
-    });
+      try {
+        conn.send(JSON.stringify({
+          type: 'peer-handshake',
+          peerId: this.peerId,
+          deviceMeta: this.deviceMeta
+        }));
+      } catch (e) {}
+    };
+
+    if (conn.open) {
+      onOpen();
+    } else {
+      conn.on('open', onOpen);
+    }
 
     conn.on('data', async (data) => {
       if (typeof Blob !== 'undefined' && data instanceof Blob) {
@@ -381,12 +389,15 @@ class WebRTCManager {
 
     if (targetSocketId.startsWith('airshare-') && this.peer) {
       const conn = this.peer.connect(targetSocketId, { reliable: true });
+      this.setupPeerJsDataConnection(conn);
       return new Promise((resolve) => {
-        conn.on('open', () => {
-          this.setupPeerJsDataConnection(conn);
+        if (conn.open) {
           resolve(conn);
-        });
-        setTimeout(() => resolve(null), 4000);
+        } else {
+          conn.on('open', () => resolve(conn));
+          conn.on('error', () => resolve(null));
+          setTimeout(() => resolve(conn.open ? conn : null), 5000);
+        }
       });
     }
 

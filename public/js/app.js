@@ -586,12 +586,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       filesToSend.forEach(file => {
         if (targetPeerId === 'all') {
-          const otherPeers = peers.filter(p => p.socketId !== selfSocketId && p.socketId !== webrtcManager.peerId);
+          const otherPeers = peers.filter(p => {
+            const id = p.peerId || p.socketId;
+            return id && id !== selfSocketId && id !== webrtcManager.peerId;
+          });
           if (otherPeers.length === 0) {
             alert('No other devices connected in this room! Scan QR code on your phone or open another device tab to connect.');
             return;
           }
-          otherPeers.forEach(peer => initiateFileTransfer(file, peer.socketId || peer.peerId));
+          otherPeers.forEach(peer => initiateFileTransfer(file, peer.peerId || peer.socketId));
         } else {
           initiateFileTransfer(file, targetPeerId);
         }
@@ -801,17 +804,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function updatePeersUI(roomPeers) {
-    peers = roomPeers;
+    if (Array.isArray(roomPeers)) {
+      roomPeers.forEach(rp => {
+        const rpId = rp.peerId || rp.socketId;
+        const existingIndex = peers.findIndex(p => {
+          const pId = p.peerId || p.socketId;
+          return (p.deviceId && rp.deviceId && p.deviceId === rp.deviceId) || (pId && pId === rpId);
+        });
+        if (existingIndex >= 0) {
+          peers[existingIndex] = { ...peers[existingIndex], ...rp };
+        } else {
+          peers.push(rp);
+        }
+      });
+    }
 
     // Filter out self and de-duplicate peers by deviceId or composite identity key
     const uniquePeersMap = new Map();
     peers.forEach(p => {
+      const pId = p.peerId || p.socketId;
       const isSelf = (p.deviceId && p.deviceId === deviceInfo.deviceId) ||
-                     p.socketId === selfSocketId ||
-                     p.socketId === webrtcManager.peerId ||
-                     p.peerId === webrtcManager.peerId;
-      if (!isSelf) {
-        const uniqueKey = p.deviceId || p.socketId || `${p.deviceName}_${p.osName}_${p.browserName}`;
+                     (selfSocketId && pId === selfSocketId) ||
+                     (webrtcManager.peerId && pId === webrtcManager.peerId);
+      if (!isSelf && pId) {
+        const uniqueKey = p.deviceId || pId;
         uniquePeersMap.set(uniqueKey, p);
       }
     });
