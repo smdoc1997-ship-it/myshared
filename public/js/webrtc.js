@@ -106,7 +106,11 @@ class WebRTCManager {
       this.peerId = id;
       this.peer = new Peer(id, {
         debug: 1,
-        config: { iceServers: this.iceServers }
+        iceServers: this.iceServers,
+        config: {
+          iceServers: this.iceServers,
+          sdpSemantics: 'unified-plan'
+        }
       });
 
       this.peer.on('open', (assignedId) => {
