@@ -206,11 +206,21 @@
   <div class="modal-overlay" id="qrModal">
     <div class="modal-card">
       <div class="modal-header">
-        <h3><i data-lucide="qr-code"></i> Connect Phone / Second Device</h3>
+        <h3><i data-lucide="qr-code"></i> Connect Phone / Mobile Internet</h3>
         <button class="btn-close" id="btnCloseQr"><i data-lucide="x"></i></button>
       </div>
       <div class="modal-body text-center">
-        <p class="modal-desc">Scan this QR code with your phone camera to join room <strong id="qrRoomCodeDisplay">------</strong> instantly over Wi-Fi!</p>
+        <p class="modal-desc">Scan with your phone to join room <strong id="qrRoomCodeDisplay">------</strong> instantly over Mobile Data or Wi-Fi!</p>
+        
+        <div style="display:flex;justify-content:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" id="btnQrGlobalLink" title="Works anywhere on 4G/5G mobile internet">
+            <i data-lucide="globe"></i> Mobile Data (4G/5G)
+          </button>
+          <button class="btn btn-sm btn-outline" id="btnQrLocalLink" title="Works when on same local Wi-Fi router">
+            <i data-lucide="wifi"></i> Local Wi-Fi
+          </button>
+        </div>
+
         <div class="qr-container">
           <img id="qrCodeImg" src="" alt="QR Code Loading...">
         </div>
@@ -274,7 +284,7 @@
   </div>
 
   <!-- Scripts -->
-  <script src="/js/webrtc.js?v=2.0.0"></script>
-  <script src="/js/app.js?v=2.0.0"></script>
+  <script src="/js/webrtc.js?v=2.1.0"></script>
+  <script src="/js/app.js?v=2.1.0"></script>
 </body>
 </html>

@@ -100,6 +100,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const qrUrlInput = document.getElementById('qrUrlInput');
   const btnCopyQrUrl = document.getElementById('btnCopyQrUrl');
   const qrRoomCodeDisplay = document.getElementById('qrRoomCodeDisplay');
+  const btnQrGlobalLink = document.getElementById('btnQrGlobalLink');
+  const btnQrLocalLink = document.getElementById('btnQrLocalLink');
 
   const previewModal = document.getElementById('previewModal');
   const btnClosePreview = document.getElementById('btnClosePreview');
@@ -286,11 +288,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  function getGlobalShareUrl() {
+    const isLocalhost = window.location.hostname === 'localhost' ||
+                        window.location.hostname.startsWith('192.168.') ||
+                        window.location.hostname.startsWith('10.') ||
+                        window.location.hostname.startsWith('127.');
+    const publicBaseUrl = isLocalhost ? 'https://myshared.vercel.app' : window.location.origin;
+    return `${publicBaseUrl}?room=${currentRoomId}`;
+  }
+
+  function getLocalShareUrl() {
+    return `${networkInfo.lanUrl || window.location.origin}?room=${currentRoomId}`;
+  }
+
   if (btnCopyLink) {
     btnCopyLink.addEventListener('click', () => {
-      const shareUrl = `${window.location.origin}?room=${currentRoomId}`;
+      const shareUrl = getGlobalShareUrl();
       navigator.clipboard.writeText(shareUrl);
-      showToast('Direct invite link copied to clipboard!');
+      showToast('Global Mobile Data (4G/5G) invite link copied!');
     });
   }
 
@@ -362,6 +377,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         navigator.clipboard.writeText(qrUrlInput.value);
         showToast('QR Code link copied!');
       }
+    });
+  }
+
+  if (btnQrGlobalLink) {
+    btnQrGlobalLink.addEventListener('click', () => {
+      activeQrMode = 'global';
+      updateQrModalContent();
+    });
+  }
+
+  if (btnQrLocalLink) {
+    btnQrLocalLink.addEventListener('click', () => {
+      activeQrMode = 'local';
+      updateQrModalContent();
     });
   }
 
@@ -1163,14 +1192,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  async function openQrModal() {
-    const targetUrl = `${networkInfo.lanUrl || window.location.origin}?room=${currentRoomId}`;
+  let activeQrMode = 'global';
+
+  async function openQrModal(mode = 'global') {
+    activeQrMode = mode;
+    await updateQrModalContent();
+    qrModal.classList.add('active');
+  }
+
+  async function updateQrModalContent() {
+    const targetUrl = activeQrMode === 'global' ? getGlobalShareUrl() : getLocalShareUrl();
     qrUrlInput.value = targetUrl;
     qrRoomCodeDisplay.textContent = currentRoomId;
 
-    // Set immediate client fallback QR image so modal opens instantly
+    if (btnQrGlobalLink && btnQrLocalLink) {
+      if (activeQrMode === 'global') {
+        btnQrGlobalLink.className = 'btn btn-sm btn-primary';
+        btnQrLocalLink.className = 'btn btn-sm btn-outline';
+      } else {
+        btnQrGlobalLink.className = 'btn btn-sm btn-outline';
+        btnQrLocalLink.className = 'btn btn-sm btn-primary';
+      }
+    }
+
     qrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(targetUrl)}`;
-    qrModal.classList.add('active');
 
     try {
       const res = await fetch(`/api/qr-code?url=${encodeURIComponent(targetUrl)}`);
