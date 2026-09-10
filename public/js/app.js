@@ -66,6 +66,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnCreateRoom = document.getElementById('btnCreateRoom');
   const btnCopyLink = document.getElementById('btnCopyLink');
   const btnLeaveRoom = document.getElementById('btnLeaveRoom');
+  const btnRetryConnection = document.getElementById('btnRetryConnection');
   const btnShowQr = document.getElementById('btnShowQr');
   const btnOpenScanCamera = document.getElementById('btnOpenScanCamera');
   
@@ -290,6 +291,33 @@ document.addEventListener('DOMContentLoaded', async () => {
       const shareUrl = `${window.location.origin}?room=${currentRoomId}`;
       navigator.clipboard.writeText(shareUrl);
       showToast('Direct invite link copied to clipboard!');
+    });
+  }
+
+  if (btnRetryConnection) {
+    btnRetryConnection.addEventListener('click', () => {
+      if (!currentRoomId) {
+        showToast('Join or create a room first', 'warning');
+        return;
+      }
+      showToast('Retrying room & P2P connection...', 'info');
+
+      if (socket && socket.connected) {
+        socket.emit('join-room', {
+          roomId: currentRoomId,
+          deviceName: deviceInfo.deviceName,
+          deviceType: deviceInfo.deviceType,
+          osName: deviceInfo.osName,
+          browserName: deviceInfo.browserName
+        });
+      }
+
+      peers.forEach(peer => {
+        const targetId = peer.socketId || peer.peerId;
+        if (targetId && targetId !== selfSocketId && targetId !== webrtcManager.peerId) {
+          webrtcManager.forceReconnectPeer(targetId);
+        }
+      });
     });
   }
 
@@ -729,6 +757,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnLeaveRoom) btnLeaveRoom.style.display = isJoined ? 'inline-flex' : 'none';
     if (btnCopyLink) btnCopyLink.style.display = isJoined ? 'inline-flex' : 'none';
     if (btnShowQr) btnShowQr.style.display = isJoined ? 'inline-flex' : 'none';
+    if (btnRetryConnection) btnRetryConnection.style.display = isJoined ? 'inline-flex' : 'none';
   }
 
   function updateSelfDeviceUI() {
@@ -785,7 +814,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div class="device-name">${escapeHtml(peer.deviceName)}</div>
           <div class="device-meta">${escapeHtml(peer.osName)} • ${escapeHtml(peer.browserName)}</div>
         </div>
-        <span class="badge peer-badge">CONNECTED</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="btn-icon-subtle" onclick="retryPeerConnection('${targetId}', event)" title="Retry P2P Connection to ${escapeHtml(peer.deviceName)}">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <span class="badge peer-badge">CONNECTED</span>
+        </div>
       `;
       peerDiv.addEventListener('click', () => {
         targetPeerSelect.value = targetId;
@@ -962,6 +996,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     errorTransferUI(transferId, 'Cancelled by user');
     showToast('Transfer cancelled', 'error');
+  };
+
+  window.retryPeerConnection = (targetId, event) => {
+    if (event) event.stopPropagation();
+    const peer = peers.find(p => p.socketId === targetId || p.peerId === targetId);
+    const name = peer ? peer.deviceName : 'device';
+    showToast(`Retrying P2P connection to ${name}...`, 'info');
+    webrtcManager.forceReconnectPeer(targetId);
   };
 
   function updateActiveCountUI() {

@@ -321,6 +321,14 @@ class WebRTCManager {
     this.iceCandidatesQueue.delete(targetSocketId);
   }
 
+  // Force reconnect P2P channel to a specific target peer
+  forceReconnectPeer(targetSocketId) {
+    if (!targetSocketId) return;
+    console.log('[WebRTC] Forcing P2P reconnect to peer:', targetSocketId);
+    this.removePeer(targetSocketId);
+    return this.connectToPeer(targetSocketId);
+  }
+
   async connectToPeer(targetSocketId) {
     if (this.peerJsConns.has(targetSocketId)) {
       return this.peerJsConns.get(targetSocketId);
