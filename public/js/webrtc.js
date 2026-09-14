@@ -14,6 +14,7 @@ class WebRTCManager {
     this.onPeerRenamed = options.onPeerRenamed || (() => {});
     this.onPeerStateChanged = options.onPeerStateChanged || (() => {});
     this.onTextReceived = options.onTextReceived || (() => {});
+    this.onPeerLeft = options.onPeerLeft || (() => {});
 
     this.peerConnections = new Map(); // targetSocketId -> RTCPeerConnection
     this.dataChannels = new Map();    // targetSocketId -> RTCDataChannel
@@ -220,8 +221,15 @@ class WebRTCManager {
     });
 
     conn.on('close', () => {
+      const meta = this.knownPeerMetas.get(conn.peer);
       this.peerJsConns.delete(conn.peer);
       this.knownPeerMetas.delete(conn.peer);
+      if (this.onPeerLeft) {
+        this.onPeerLeft({
+          peerId: conn.peer,
+          deviceName: meta?.deviceName || 'A device'
+        });
+      }
     });
   }
 

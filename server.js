@@ -89,12 +89,20 @@ io.on('connection', (socket) => {
 
     // Leave previous room if any
     if (currentRoom && rooms.has(currentRoom)) {
-      rooms.get(currentRoom).delete(socket.id);
-      if (rooms.get(currentRoom).size === 0) {
+      const prevRoomMap = rooms.get(currentRoom);
+      const leavingPeer = prevRoomMap.get(socket.id);
+      prevRoomMap.delete(socket.id);
+      if (prevRoomMap.size === 0) {
         rooms.delete(currentRoom);
       } else {
-        io.to(currentRoom).emit('peer-left', { socketId: socket.id });
-        io.to(currentRoom).emit('room-peers', Array.from(rooms.get(currentRoom).values()));
+        const remainingPeers = Array.from(prevRoomMap.values());
+        io.to(currentRoom).emit('peer-left', {
+          socketId: socket.id,
+          deviceId: leavingPeer ? leavingPeer.deviceId : null,
+          deviceName: leavingPeer ? leavingPeer.deviceName : 'A device',
+          remainingPeers
+        });
+        io.to(currentRoom).emit('room-peers', remainingPeers);
       }
       socket.leave(currentRoom);
     }
@@ -213,15 +221,23 @@ io.on('connection', (socket) => {
 
   socket.on('leave-room', () => {
     if (currentRoom && rooms.has(currentRoom)) {
-      rooms.get(currentRoom).delete(socket.id);
-      if (rooms.get(currentRoom).size === 0) {
+      const roomMap = rooms.get(currentRoom);
+      const leavingPeer = roomMap.get(socket.id);
+      roomMap.delete(socket.id);
+      if (roomMap.size === 0) {
         rooms.delete(currentRoom);
       } else {
-        io.to(currentRoom).emit('peer-left', { socketId: socket.id });
-        io.to(currentRoom).emit('room-peers', Array.from(rooms.get(currentRoom).values()));
+        const remainingPeers = Array.from(roomMap.values());
+        io.to(currentRoom).emit('peer-left', {
+          socketId: socket.id,
+          deviceId: leavingPeer ? leavingPeer.deviceId : null,
+          deviceName: leavingPeer ? leavingPeer.deviceName : 'A device',
+          remainingPeers
+        });
+        io.to(currentRoom).emit('room-peers', remainingPeers);
       }
       socket.leave(currentRoom);
-      console.log(`[LEAVE] Socket ${socket.id} left room ${currentRoom}`);
+      console.log(`[LEAVE] Socket ${socket.id} (${leavingPeer ? leavingPeer.deviceName : ''}) left room ${currentRoom}`);
       currentRoom = null;
     }
   });
@@ -230,14 +246,21 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (currentRoom && rooms.has(currentRoom)) {
       const roomMap = rooms.get(currentRoom);
+      const leavingPeer = roomMap.get(socket.id);
       roomMap.delete(socket.id);
       if (roomMap.size === 0) {
         rooms.delete(currentRoom);
       } else {
-        io.to(currentRoom).emit('peer-left', { socketId: socket.id });
-        io.to(currentRoom).emit('room-peers', Array.from(roomMap.values()));
+        const remainingPeers = Array.from(roomMap.values());
+        io.to(currentRoom).emit('peer-left', {
+          socketId: socket.id,
+          deviceId: leavingPeer ? leavingPeer.deviceId : null,
+          deviceName: leavingPeer ? leavingPeer.deviceName : 'A device',
+          remainingPeers
+        });
+        io.to(currentRoom).emit('room-peers', remainingPeers);
       }
-      console.log(`[DISCONNECT] Socket ${socket.id} left room ${currentRoom}`);
+      console.log(`[DISCONNECT] Socket ${socket.id} (${leavingPeer ? leavingPeer.deviceName : ''}) left room ${currentRoom}`);
     }
   });
 });

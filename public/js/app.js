@@ -54,11 +54,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     onTextReceived: (textData) => handleReceivedText(textData),
     onPeerDiscovered: (peerData) => handleDiscoveredPeer(peerData),
     onPeerRenamed: (peerData) => handlePeerRenamed(peerData),
-    onPeerStateChanged: (peerId, state) => updatePeerBadgeUI(peerId, state)
+    onPeerStateChanged: (peerId, state) => updatePeerBadgeUI(peerId, state),
+    onPeerLeft: (peerData) => handlePeerLeft(peerData)
   });
 
-  // Track processed text message IDs to prevent duplicate handling
+  // Track processed text message IDs and leave notifications to prevent duplicates
   const processedTextIds = new Set();
+  const recentLeaveNotifications = new Set();
 
   // DOM Element Selectors
   const networkBadge = document.getElementById('networkBadge');
@@ -198,14 +200,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     socket.on('user-joined', (peer) => {
       console.log('[Socket] User joined room:', peer);
-      showToast(`${peer.deviceName || 'New device'} joined the room!`);
+      const name = peer?.deviceName || 'New device';
+      showToast(`✨ ${name} joined the room! Available to transfer.`, 'success');
     });
 
-    socket.on('peer-left', ({ socketId }) => {
-      console.log('[Socket] Peer left room:', socketId);
-      webrtcManager.removePeer(socketId);
-      peers = peers.filter(p => p.socketId !== socketId && p.peerId !== socketId);
-      updatePeersUI(peers);
+    socket.on('peer-left', (data) => {
+      console.log('[Socket] Peer left room event received:', data);
+      handlePeerLeft(data);
     });
   }
 
@@ -1051,6 +1052,65 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  function handlePeerLeft(data) {
+    if (!data) return;
+    const socketId = data.socketId;
+    const peerId = data.peerId;
+    const deviceId = data.deviceId;
+
+    // Find the leaving peer from local peers list
+    const leavingPeer = peers.find(p => 
+      (socketId && (p.socketId === socketId || p.peerId === socketId)) ||
+      (peerId && (p.peerId === peerId || p.socketId === peerId)) ||
+      (deviceId && p.deviceId === deviceId)
+    );
+
+    const leftDeviceName = data.deviceName || leavingPeer?.deviceName || 'A device';
+    const dedupeKey = deviceId || socketId || peerId || leftDeviceName;
+
+    // Clean up WebRTC peer connections
+    if (socketId) webrtcManager.removePeer(socketId);
+    if (peerId) webrtcManager.removePeer(peerId);
+    if (leavingPeer?.peerId) webrtcManager.removePeer(leavingPeer.peerId);
+    if (leavingPeer?.socketId) webrtcManager.removePeer(leavingPeer.socketId);
+
+    // Remove from local peers array
+    peers = peers.filter(p => {
+      const matchSocket = socketId && (p.socketId === socketId || p.peerId === socketId);
+      const matchPeer = peerId && (p.peerId === peerId || p.socketId === peerId);
+      const matchDevice = deviceId && p.deviceId === deviceId;
+      const matchLeaving = leavingPeer && p === leavingPeer;
+      return !matchSocket && !matchPeer && !matchDevice && !matchLeaving;
+    });
+
+    // Update the UI immediately (cards, counters, dropdowns)
+    updatePeersUI(peers);
+
+    // Prevent duplicate toast if both socket and WebRTC close events fire close together
+    if (recentLeaveNotifications.has(dedupeKey)) {
+      return;
+    }
+    recentLeaveNotifications.add(dedupeKey);
+    setTimeout(() => recentLeaveNotifications.delete(dedupeKey), 3500);
+
+    // Calculate remaining active other peers (who is available)
+    const availableOtherPeers = peers.filter(p => {
+      const pId = p.peerId || p.socketId;
+      const isSelf = (p.deviceId && p.deviceId === deviceInfo.deviceId) ||
+                     (selfSocketId && pId === selfSocketId) ||
+                     (webrtcManager.peerId && pId === webrtcManager.peerId);
+      return pId && !isSelf;
+    });
+
+    // Construct clear notification showing who left and who is available
+    if (availableOtherPeers.length > 0) {
+      const availableNames = availableOtherPeers.map(p => p.deviceName || 'Device').join(', ');
+      showToast(`👋 ${leftDeviceName} left the room.\nCurrently Available (${availableOtherPeers.length}): ${availableNames}`, 'warning');
+    } else {
+      showToast(`👋 ${leftDeviceName} left the room.\nNo other devices currently available in room.`, 'warning');
+    }
+  }
+
   // UI Helpers & Renderers
   function joinRoom(roomId) {
     if (!roomId) return;
@@ -1164,10 +1224,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activePeersBadge) {
       if (otherPeers.length > 0) {
         activePeersBadge.className = 'badge peer-badge badge-p2p';
-        activePeersBadge.textContent = `${otherPeers.length} Active Peer${otherPeers.length === 1 ? '' : 's'}`;
+        activePeersBadge.textContent = `${otherPeers.length} Available Peer${otherPeers.length === 1 ? '' : 's'}`;
       } else {
-        activePeersBadge.className = 'badge badge-relay';
-        activePeersBadge.textContent = '0 Active Peers';
+        activePeersBadge.className = 'badge badge-connecting';
+        activePeersBadge.textContent = '0 Peers Available';
       }
     }
 
@@ -1190,6 +1250,29 @@ document.addEventListener('DOMContentLoaded', async () => {
       <span class="badge self-badge">YOU</span>
     `;
     devicesGrid.appendChild(selfDiv);
+
+    // If no other devices are currently available in the room, show clean indicator
+    if (otherPeers.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'device-item empty-peers-hint';
+      emptyDiv.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-radius: var(--radius-md);
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px dashed var(--border-card);
+      `;
+      emptyDiv.innerHTML = `
+        <div class="device-icon" style="background:rgba(255,255,255,0.04);color:var(--text-muted);"><i data-lucide="radio"></i></div>
+        <div class="device-details">
+          <div class="device-name" style="color:var(--text-secondary);font-size:0.9rem;">No other peers in room</div>
+          <div class="device-meta">Share room code <strong style="color:var(--accent-cyan);">${currentRoomId || '------'}</strong> or scan QR to connect</div>
+        </div>
+      `;
+      devicesGrid.appendChild(emptyDiv);
+    }
 
     const editBtnInner = document.getElementById('btnEditDeviceNameInner');
     if (editBtnInner) {
@@ -1825,7 +1908,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  function showToast(msg, type = 'info') {
+  function showToast(msg, type = 'info', duration = 3500) {
     // 1. Toastr.js Integration if loaded
     if (typeof toastr !== 'undefined') {
       try {
@@ -1833,38 +1916,81 @@ document.addEventListener('DOMContentLoaded', async () => {
           closeButton: true,
           progressBar: true,
           positionClass: "toast-bottom-right",
-          timeOut: 3500
+          timeOut: type === 'warning' ? 5000 : duration
         };
-        if (type === 'success') toastr.success(msg);
-        else if (type === 'error') toastr.error(msg);
-        else if (type === 'warning') toastr.warning(msg);
-        else toastr.info(msg);
+        const title = type === 'warning' ? 'Room Notification' : (type === 'success' ? 'AirShare' : '');
+        if (type === 'success') toastr.success(msg, title);
+        else if (type === 'error') toastr.error(msg, title);
+        else if (type === 'warning') toastr.warning(msg, title);
+        else toastr.info(msg, title);
       } catch (e) {}
     }
 
     // 2. AirShare Custom Glassmorphism Toast Notification
     let toast = document.createElement('div');
     toast.className = 'toast-notification';
+
+    let bg = 'rgba(0, 242, 254, 0.95)';
+    let color = '#07090e';
+    let shadow = 'rgba(0, 242, 254, 0.4)';
+    let icon = 'ℹ️';
+
+    if (type === 'warning') {
+      bg = 'rgba(255, 183, 3, 0.95)';
+      color = '#0b0f19';
+      shadow = 'rgba(255, 183, 3, 0.45)';
+      icon = '👋';
+    } else if (type === 'error') {
+      bg = 'rgba(255, 71, 87, 0.95)';
+      color = '#ffffff';
+      shadow = 'rgba(255, 71, 87, 0.45)';
+      icon = '⚠️';
+    } else if (type === 'success') {
+      bg = 'rgba(0, 223, 162, 0.95)';
+      color = '#07090e';
+      shadow = 'rgba(0, 223, 162, 0.45)';
+      icon = '✨';
+    }
+
     toast.style.cssText = `
       position: fixed;
       bottom: 24px;
       right: 24px;
-      background: rgba(0, 242, 254, 0.95);
-      color: #07090e;
-      font-weight: 700;
-      padding: 12px 24px;
-      border-radius: 12px;
-      box-shadow: 0 10px 30px rgba(0, 242, 254, 0.4);
+      background: ${bg};
+      color: ${color};
+      font-weight: 600;
+      font-size: 0.92rem;
+      line-height: 1.45;
+      padding: 14px 20px;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px ${shadow};
       z-index: 9999;
-      transition: all 0.3s ease;
+      max-width: 440px;
+      white-space: pre-line;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
     `;
-    toast.textContent = msg;
+
+    const iconSpan = document.createElement('span');
+    iconSpan.style.cssText = 'font-size: 1.25rem; line-height: 1.2; flex-shrink: 0;';
+    iconSpan.textContent = icon;
+
+    const textSpan = document.createElement('span');
+    textSpan.style.flex = '1';
+    textSpan.textContent = msg;
+
+    toast.appendChild(iconSpan);
+    toast.appendChild(textSpan);
     document.body.appendChild(toast);
 
+    const actualDuration = type === 'warning' ? 5000 : duration;
     setTimeout(() => {
       toast.style.opacity = '0';
       toast.style.transform = 'translateY(10px)';
       setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, actualDuration);
   }
 });
