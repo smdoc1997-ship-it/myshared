@@ -203,6 +203,14 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Relay instant text notes / messages if P2P DataChannel is unavailable
+  socket.on('relay-text-message', ({ targetSocketId, textPayload }) => {
+    io.to(targetSocketId).emit('relay-text-message', {
+      senderSocketId: socket.id,
+      textPayload
+    });
+  });
+
   socket.on('leave-room', () => {
     if (currentRoom && rooms.has(currentRoom)) {
       rooms.get(currentRoom).delete(socket.id);

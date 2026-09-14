@@ -121,41 +121,86 @@
         </div>
       </section>
 
-      <!-- File Upload Dropzone -->
+      <!-- File & Text Sharing Card -->
       <section class="card dropzone-card">
-        <div class="dropzone" id="dropzone">
-          <input type="file" id="fileInput" multiple style="display: none;">
-          <div class="dropzone-icon">
-            <i data-lucide="upload-cloud"></i>
+        <!-- Segmented Tab Switcher -->
+        <div class="share-tabs-nav">
+          <button class="share-tab active" id="tabFiles" type="button">
+            <i data-lucide="folder"></i> Files &amp; Media
+          </button>
+          <button class="share-tab" id="tabText" type="button">
+            <i data-lucide="message-square-text"></i> Text &amp; Notes
+          </button>
+        </div>
+
+        <!-- Files Panel -->
+        <div class="share-panel" id="filesSharePanel">
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" multiple style="display: none;">
+            <div class="dropzone-icon">
+              <i data-lucide="upload-cloud"></i>
+            </div>
+            <h3>Drag & Drop Files Here</h3>
+            <p class="dropzone-subtitle">or click to browse from your computer / phone</p>
+            <div class="supported-tags">
+              <span class="tag"><i data-lucide="image"></i> Photos</span>
+              <span class="tag"><i data-lucide="film"></i> Videos</span>
+              <span class="tag"><i data-lucide="music"></i> Audio</span>
+              <span class="tag"><i data-lucide="file-text"></i> Documents</span>
+              <span class="tag"><i data-lucide="archive"></i> Zip & Any File</span>
+            </div>
           </div>
-          <h3>Drag & Drop Files Here</h3>
-          <p class="dropzone-subtitle">or click to browse from your computer / phone</p>
-          <div class="supported-tags">
-            <span class="tag"><i data-lucide="image"></i> Photos</span>
-            <span class="tag"><i data-lucide="film"></i> Videos</span>
-            <span class="tag"><i data-lucide="music"></i> Audio</span>
-            <span class="tag"><i data-lucide="file-text"></i> Documents</span>
-            <span class="tag"><i data-lucide="archive"></i> Zip & Any File</span>
+
+          <!-- Selected Files Queue -->
+          <div class="file-queue-container" id="fileQueueContainer" style="display: none;">
+            <div class="queue-header">
+              <h4>Selected Files (<span id="queueCount">0</span>)</h4>
+              <button class="btn btn-sm btn-ghost" id="btnClearQueue"><i data-lucide="trash-2"></i> Clear All</button>
+            </div>
+            <div class="queue-list" id="queueList"></div>
+            <div class="queue-footer">
+              <div class="target-select-wrapper">
+                <label for="targetPeerSelect">Recipient:</label>
+                <select id="targetPeerSelect">
+                  <option value="all">Broadcast to All Connected Peers</option>
+                </select>
+              </div>
+              <button class="btn btn-accent btn-lg" id="btnSendFiles">
+                <i data-lucide="send"></i> Transfer Files Now
+              </button>
+            </div>
           </div>
         </div>
 
-        <!-- Selected Files Queue -->
-        <div class="file-queue-container" id="fileQueueContainer" style="display: none;">
-          <div class="queue-header">
-            <h4>Selected Files (<span id="queueCount">0</span>)</h4>
-            <button class="btn btn-sm btn-ghost" id="btnClearQueue"><i data-lucide="trash-2"></i> Clear All</button>
-          </div>
-          <div class="queue-list" id="queueList"></div>
-          <div class="queue-footer">
-            <div class="target-select-wrapper">
-              <label for="targetPeerSelect">Recipient:</label>
-              <select id="targetPeerSelect">
-                <option value="all">Broadcast to All Connected Peers</option>
-              </select>
+        <!-- Text & Notes Panel -->
+        <div class="share-panel" id="textSharePanel" style="display: none;">
+          <div class="text-share-container">
+            <div class="text-share-toolbar">
+              <span class="text-share-hint"><i data-lucide="info"></i> Share clipboard, links, notes, or Wi-Fi passwords instantly</span>
+              <button class="btn btn-sm btn-outline" id="btnPasteClipboard" type="button" title="Paste from clipboard">
+                <i data-lucide="clipboard"></i> Paste Clipboard
+              </button>
             </div>
-            <button class="btn btn-accent btn-lg" id="btnSendFiles">
-              <i data-lucide="send"></i> Transfer Files Now
-            </button>
+            <textarea id="sharedTextInput" placeholder="Type or paste text, links, code snippets, Wi-Fi passwords, or notes to send instantly to connected devices..." rows="6"></textarea>
+            <div class="text-share-meta">
+              <div class="text-stats">
+                <span id="textCharCount">0 characters</span> &bull; <span id="textWordCount">0 words</span>
+              </div>
+              <div class="text-actions-bar">
+                <button class="btn btn-sm btn-ghost" id="btnClearText" type="button"><i data-lucide="trash-2"></i> Clear</button>
+              </div>
+            </div>
+            <div class="queue-footer text-footer">
+              <div class="target-select-wrapper">
+                <label for="targetTextPeerSelect">Recipient:</label>
+                <select id="targetTextPeerSelect">
+                  <option value="all">Broadcast to All Connected Peers</option>
+                </select>
+              </div>
+              <button class="btn btn-accent btn-lg" id="btnSendText" type="button">
+                <i data-lucide="send"></i> Send Text Now
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -284,8 +329,37 @@
     </div>
   </div>
 
+  <!-- Received Text & Notes Modal -->
+  <div class="modal-overlay" id="receivedTextModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <i data-lucide="message-square-text" style="color:var(--accent-cyan);"></i>
+          <h3>Received Note from <span id="receivedTextSender" style="color:var(--accent-cyan);">Peer</span></h3>
+        </div>
+        <button class="btn-close" id="btnCloseReceivedText" title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="received-text-meta">
+          <span class="text-timestamp" id="receivedTextTime">Just now</span>
+          <span class="badge self-badge" id="receivedTextStats">0 chars</span>
+        </div>
+        <div class="received-text-box" id="receivedTextContent"></div>
+        <div class="received-text-actions" style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="btnCopyReceivedText">
+            <i data-lucide="copy"></i> Copy to Clipboard
+          </button>
+          <a class="btn btn-outline" id="btnOpenReceivedUrl" href="#" target="_blank" rel="noopener noreferrer" style="display: none;">
+            <i data-lucide="external-link"></i> Open Link
+          </a>
+          <button class="btn btn-ghost" id="btnCloseReceivedTextFooter">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts -->
-  <script src="/js/webrtc.js?v=2.1.0"></script>
-  <script src="/js/app.js?v=2.1.0"></script>
+  <script src="/js/webrtc.js?v=2.2.0"></script>
+  <script src="/js/app.js?v=2.2.0"></script>
 </body>
 </html>

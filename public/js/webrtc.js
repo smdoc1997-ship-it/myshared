@@ -13,6 +13,7 @@ class WebRTCManager {
     this.onPeerDiscovered = options.onPeerDiscovered || (() => {});
     this.onPeerRenamed = options.onPeerRenamed || (() => {});
     this.onPeerStateChanged = options.onPeerStateChanged || (() => {});
+    this.onTextReceived = options.onTextReceived || (() => {});
 
     this.peerConnections = new Map(); // targetSocketId -> RTCPeerConnection
     this.dataChannels = new Map();    // targetSocketId -> RTCDataChannel
@@ -615,6 +616,18 @@ class WebRTCManager {
           this.onPeerRenamed({ peerId: senderSocketId, deviceName: msg.deviceName });
           return;
         }
+        if (msg.type === 'text-message') {
+          this.onTextReceived({
+            id: msg.id,
+            text: msg.text,
+            senderSocketId,
+            senderName: msg.senderName || 'Connected Device',
+            senderType: msg.senderType || 'desktop',
+            timestamp: msg.timestamp || new Date().toLocaleTimeString(),
+            channel: 'WebRTC Direct P2P'
+          });
+          return;
+        }
         if (msg.type === 'file-header') {
           this.incomingTransfers.set(msg.transferId, {
             senderSocketId,
@@ -835,6 +848,33 @@ class WebRTCManager {
     if (state) {
       state.cancelled = true;
       this.activeOutgoingTransfers.delete(transferId);
+    }
+  }
+
+  // Send instant text / clipboard message over P2P DataChannel
+  async sendTextP2P(targetSocketId, textPayload) {
+    try {
+      const dataChannel = await this.connectToPeer(targetSocketId);
+      if (!dataChannel) {
+        return false;
+      }
+      const rawChannel = dataChannel._channel || dataChannel.dataChannel || dataChannel;
+      const payloadString = JSON.stringify({
+        type: 'text-message',
+        ...textPayload
+      });
+
+      if (dataChannel.send) {
+        dataChannel.send(payloadString);
+        return true;
+      } else if (rawChannel && rawChannel.send) {
+        rawChannel.send(payloadString);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn(`[WebRTC] sendTextP2P error to ${targetSocketId}:`, err);
+      return false;
     }
   }
 }

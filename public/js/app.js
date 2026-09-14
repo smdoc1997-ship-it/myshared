@@ -51,10 +51,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     onComplete: (transferId) => completeTransferUI(transferId),
     onError: (transferId, errorMsg) => errorTransferUI(transferId, errorMsg),
     onFileReceived: (fileData) => handleReceivedFile(fileData),
+    onTextReceived: (textData) => handleReceivedText(textData),
     onPeerDiscovered: (peerData) => handleDiscoveredPeer(peerData),
     onPeerRenamed: (peerData) => handlePeerRenamed(peerData),
     onPeerStateChanged: (peerId, state) => updatePeerBadgeUI(peerId, state)
   });
+
+  // Track processed text message IDs to prevent duplicate handling
+  const processedTextIds = new Set();
 
   // DOM Element Selectors
   const networkBadge = document.getElementById('networkBadge');
@@ -77,6 +81,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const selfDeviceMeta = document.getElementById('selfDeviceMeta');
   const btnEditDeviceName = document.getElementById('btnEditDeviceName');
 
+  // Segmented Tabs & Panels
+  const tabFiles = document.getElementById('tabFiles');
+  const tabText = document.getElementById('tabText');
+  const filesSharePanel = document.getElementById('filesSharePanel');
+  const textSharePanel = document.getElementById('textSharePanel');
+
+  // File Upload Dropzone Selectors
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
   const fileQueueContainer = document.getElementById('fileQueueContainer');
@@ -86,15 +97,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   const targetPeerSelect = document.getElementById('targetPeerSelect');
   const btnSendFiles = document.getElementById('btnSendFiles');
 
+  // Text & Notes Sharing Selectors
+  const sharedTextInput = document.getElementById('sharedTextInput');
+  const textCharCount = document.getElementById('textCharCount');
+  const textWordCount = document.getElementById('textWordCount');
+  const btnClearText = document.getElementById('btnClearText');
+  const btnPasteClipboard = document.getElementById('btnPasteClipboard');
+  const targetTextPeerSelect = document.getElementById('targetTextPeerSelect');
+  const btnSendText = document.getElementById('btnSendText');
+
+  // Transfers HUD Selectors
   const transfersCard = document.getElementById('transfersCard');
   const transfersList = document.getElementById('transfersList');
   const emptyTransfersState = document.getElementById('emptyTransfersState');
   const activeTransfersCount = document.getElementById('activeTransfersCount');
 
+  // History Selectors
   const historyList = document.getElementById('historyList');
   const emptyHistoryState = document.getElementById('emptyHistoryState');
   const btnClearHistory = document.getElementById('btnClearHistory');
 
+  // Modals Selectors
   const qrModal = document.getElementById('qrModal');
   const btnCloseQr = document.getElementById('btnCloseQr');
   const qrCodeImg = document.getElementById('qrCodeImg');
@@ -118,6 +141,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const cameraQrModal = document.getElementById('cameraQrModal');
   const btnCloseCameraQr = document.getElementById('btnCloseCameraQr');
   const btnStopCameraScan = document.getElementById('btnStopCameraScan');
+
+  // Received Text Modal Selectors
+  const receivedTextModal = document.getElementById('receivedTextModal');
+  const btnCloseReceivedText = document.getElementById('btnCloseReceivedText');
+  const btnCloseReceivedTextFooter = document.getElementById('btnCloseReceivedTextFooter');
+  const receivedTextSender = document.getElementById('receivedTextSender');
+  const receivedTextTime = document.getElementById('receivedTextTime');
+  const receivedTextStats = document.getElementById('receivedTextStats');
+  const receivedTextContent = document.getElementById('receivedTextContent');
+  const btnCopyReceivedText = document.getElementById('btnCopyReceivedText');
+  const btnOpenReceivedUrl = document.getElementById('btnOpenReceivedUrl');
 
   // Update Self Device UI
   updateSelfDeviceUI();
@@ -249,6 +283,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         relayIncomingTransfers.delete(fileId);
         errorTransferUI(fileId, 'Cancelled by sender');
       }
+    });
+
+    socket.on('relay-text-message', ({ senderSocketId, textPayload }) => {
+      console.log('[Socket Relay] Received text message from', senderSocketId, textPayload);
+      handleReceivedText({ ...textPayload, senderSocketId, channel: 'Relayed Stream' });
     });
   }
 
@@ -624,6 +663,244 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // =========================================================================
+  // Text & Notes Sharing Event Listeners and Handlers
+  // =========================================================================
+  if (tabFiles && tabText && filesSharePanel && textSharePanel) {
+    tabFiles.addEventListener('click', () => {
+      tabFiles.classList.add('active');
+      tabText.classList.remove('active');
+      filesSharePanel.style.display = 'block';
+      textSharePanel.style.display = 'none';
+      safeCreateIcons();
+    });
+
+    tabText.addEventListener('click', () => {
+      tabText.classList.add('active');
+      tabFiles.classList.remove('active');
+      textSharePanel.style.display = 'block';
+      filesSharePanel.style.display = 'none';
+      if (sharedTextInput) sharedTextInput.focus();
+      safeCreateIcons();
+    });
+  }
+
+  function updateTextStatsUI() {
+    if (!sharedTextInput) return;
+    const text = sharedTextInput.value;
+    const charCount = text.length;
+    const words = text.trim().length > 0 ? text.trim().split(/\s+/).length : 0;
+    if (textCharCount) textCharCount.textContent = `${charCount} characters`;
+    if (textWordCount) textWordCount.textContent = `${words} words`;
+  }
+
+  if (sharedTextInput) {
+    sharedTextInput.addEventListener('input', updateTextStatsUI);
+  }
+
+  if (btnClearText && sharedTextInput) {
+    btnClearText.addEventListener('click', () => {
+      sharedTextInput.value = '';
+      updateTextStatsUI();
+      sharedTextInput.focus();
+    });
+  }
+
+  if (btnPasteClipboard && sharedTextInput) {
+    btnPasteClipboard.addEventListener('click', async () => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const clipText = await navigator.clipboard.readText();
+          if (clipText) {
+            sharedTextInput.value = clipText;
+            updateTextStatsUI();
+            showToast('Pasted from clipboard!', 'success');
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Clipboard read error:', err);
+      }
+      // Fallback prompt if clipboard permission is restricted
+      const manual = prompt('Paste your text here:');
+      if (manual) {
+        sharedTextInput.value = manual;
+        updateTextStatsUI();
+      }
+    });
+  }
+
+  if (btnSendText) {
+    btnSendText.addEventListener('click', () => {
+      sendTextMessage();
+    });
+  }
+
+  async function sendTextMessage() {
+    const rawText = sharedTextInput ? sharedTextInput.value.trim() : '';
+    if (!rawText) {
+      showToast('Please enter or paste text to share.', 'warning');
+      if (sharedTextInput) sharedTextInput.focus();
+      return;
+    }
+
+    const otherPeers = peers.filter(p => {
+      const id = p.peerId || p.socketId;
+      const isSelf = (p.deviceId && p.deviceId === deviceInfo.deviceId) || id === selfSocketId || id === webrtcManager.peerId;
+      return id && !isSelf;
+    });
+
+    if (otherPeers.length === 0) {
+      alert('No other devices connected in this room! Connect another device or phone to share text.');
+      return;
+    }
+
+    const targetOption = targetTextPeerSelect ? targetTextPeerSelect.value : 'all';
+    const messageId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const timestampStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const textPayload = {
+      type: 'text-message',
+      id: messageId,
+      text: rawText,
+      senderName: deviceInfo.deviceName,
+      senderType: deviceInfo.deviceType,
+      timestamp: timestampStr
+    };
+
+    let targetPeers = [];
+    let recipientName = 'All Peers';
+
+    if (targetOption === 'all') {
+      targetPeers = otherPeers;
+    } else {
+      const found = otherPeers.find(p => (p.socketId === targetOption || p.peerId === targetOption));
+      if (found) {
+        targetPeers = [found];
+        recipientName = found.deviceName || 'Peer';
+      } else {
+        targetPeers = otherPeers;
+      }
+    }
+
+    let sentCount = 0;
+    for (const peer of targetPeers) {
+      const targetId = peer.socketId || peer.peerId;
+      if (!targetId) continue;
+
+      let p2pSuccess = false;
+      try {
+        p2pSuccess = webrtcManager.sendTextP2P(targetId, textPayload);
+      } catch (e) {
+        console.warn('P2P text send error:', e);
+      }
+
+      if (!p2pSuccess && socket && socket.connected) {
+        console.log(`[Text] P2P channel not open for ${targetId}. Falling back to Socket.io relay.`);
+        socket.emit('relay-text-message', {
+          targetSocketId: targetId,
+          textPayload
+        });
+        sentCount++;
+      } else if (p2pSuccess) {
+        sentCount++;
+      }
+    }
+
+    // Add sent note to history
+    const historyEntry = {
+      id: messageId,
+      type: 'text',
+      text: rawText,
+      senderName: 'You',
+      recipientName: recipientName,
+      timestamp: timestampStr,
+      isSent: true
+    };
+    historyItems.unshift(historyEntry);
+    saveHistoryToStorage();
+    renderHistoryUI();
+
+    // Clear text input
+    if (sharedTextInput) {
+      sharedTextInput.value = '';
+      updateTextStatsUI();
+    }
+
+    showToast(`Note sent to ${recipientName}!`, 'success');
+  }
+
+  function handleReceivedText(payload) {
+    if (!payload || !payload.text) return;
+    if (payload.id && processedTextIds.has(payload.id)) {
+      console.log('[Text] Duplicate text message ignored:', payload.id);
+      return;
+    }
+    if (payload.id) processedTextIds.add(payload.id);
+
+    const senderName = payload.senderName || 'Connected Peer';
+    const timestampStr = payload.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const channelName = payload.channel || 'P2P Direct';
+
+    // Populate modal
+    if (receivedTextSender) receivedTextSender.textContent = senderName;
+    if (receivedTextTime) receivedTextTime.textContent = timestampStr;
+    if (receivedTextStats) receivedTextStats.textContent = `${payload.text.length} chars • ${channelName}`;
+    if (receivedTextContent) receivedTextContent.textContent = payload.text;
+
+    // Check for clickable URLs in text
+    const urlMatch = payload.text.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch && btnOpenReceivedUrl) {
+      btnOpenReceivedUrl.href = urlMatch[0];
+      btnOpenReceivedUrl.style.display = 'inline-flex';
+    } else if (btnOpenReceivedUrl) {
+      btnOpenReceivedUrl.style.display = 'none';
+    }
+
+    // Open modal
+    if (receivedTextModal) receivedTextModal.classList.add('active');
+
+    // Add to history
+    const historyEntry = {
+      id: payload.id || ('msg-' + Date.now()),
+      type: 'text',
+      text: payload.text,
+      senderName: senderName,
+      timestamp: timestampStr,
+      isSent: false
+    };
+    historyItems.unshift(historyEntry);
+    saveHistoryToStorage();
+    renderHistoryUI();
+
+    showToast(`Received note from ${senderName}!`, 'info');
+  }
+
+  // Received Text Modal listeners
+  if (btnCloseReceivedText && receivedTextModal) {
+    btnCloseReceivedText.addEventListener('click', () => receivedTextModal.classList.remove('active'));
+  }
+  if (btnCloseReceivedTextFooter && receivedTextModal) {
+    btnCloseReceivedTextFooter.addEventListener('click', () => receivedTextModal.classList.remove('active'));
+  }
+  if (btnCopyReceivedText && receivedTextContent) {
+    btnCopyReceivedText.addEventListener('click', async () => {
+      const textToCopy = receivedTextContent.textContent;
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+        showToast('Copied to clipboard!', 'success');
+      } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = textToCopy;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Copied to clipboard!', 'success');
+      }
+    });
+  }
+
   // Core Transfer Logic
   async function initiateFileTransfer(file, targetSocketId) {
     const transferId = generateUuid();
@@ -952,18 +1229,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         <span class="badge peer-badge ${initialBadgeClass}" id="badge-${targetId}">${initialBadgeText}</span>
       `;
       peerDiv.addEventListener('click', () => {
-        targetPeerSelect.value = targetId;
+        if (targetPeerSelect) targetPeerSelect.value = targetId;
+        if (targetTextPeerSelect) targetTextPeerSelect.value = targetId;
       });
       devicesGrid.appendChild(peerDiv);
     });
 
-    targetPeerSelect.innerHTML = '<option value="all">Broadcast to All Connected Peers</option>';
-    otherPeers.forEach(peer => {
-      const opt = document.createElement('option');
-      opt.value = peer.socketId || peer.peerId;
-      opt.textContent = `${peer.deviceName} (${peer.osName})`;
-      targetPeerSelect.appendChild(opt);
-    });
+    if (targetPeerSelect) {
+      targetPeerSelect.innerHTML = '<option value="all">Broadcast to All Connected Peers</option>';
+      otherPeers.forEach(peer => {
+        const opt = document.createElement('option');
+        opt.value = peer.socketId || peer.peerId;
+        opt.textContent = `${peer.deviceName} (${peer.osName})`;
+        targetPeerSelect.appendChild(opt);
+      });
+    }
+
+    if (targetTextPeerSelect) {
+      targetTextPeerSelect.innerHTML = '<option value="all">Broadcast to All Connected Peers</option>';
+      otherPeers.forEach(peer => {
+        const opt = document.createElement('option');
+        opt.value = peer.socketId || peer.peerId;
+        opt.textContent = `${peer.deviceName} (${peer.osName})`;
+        targetTextPeerSelect.appendChild(opt);
+      });
+    }
 
     safeCreateIcons();
   }
@@ -1190,13 +1480,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     emptyHistoryState.style.display = 'none';
-    historyList.innerHTML = historyItems.map((item, idx) => `
+    historyList.innerHTML = historyItems.map((item, idx) => {
+      if (item.type === 'text') {
+        const textContent = item.text || '';
+        const snippet = textContent.length > 50 ? textContent.substring(0, 50) + '...' : textContent;
+        const isSent = !!item.isSent;
+        const partnerInfo = isSent ? `Sent to ${escapeHtml(item.recipientName || 'Peers')}` : `From ${escapeHtml(item.senderName || 'Peer')}`;
+        const urlMatch = textContent.match(/https?:\/\/[^\s]+/i);
+        const linkUrl = urlMatch ? urlMatch[0] : null;
+
+        return `
+        <div class="history-item">
+          <div class="history-file-details">
+            <i data-lucide="message-square-text" style="color:var(--accent-cyan);"></i>
+            <div>
+              <div class="history-file-name history-text-snippet" title="${escapeHtml(textContent)}">${escapeHtml(snippet)}</div>
+              <div class="queue-file-size">
+                <span class="badge ${isSent ? 'self-badge' : 'badge-text-note'}" style="font-size:0.6rem;padding:2px 6px;margin-right:6px;">${isSent ? 'SENT NOTE' : 'RECEIVED NOTE'}</span>
+                ${textContent.length} chars &bull; ${partnerInfo} &bull; ${item.timestamp || ''}
+              </div>
+            </div>
+          </div>
+          <div class="history-actions">
+            <button class="btn btn-sm btn-outline" onclick="copyHistoryText(${idx})" title="Copy text to clipboard">
+              <i data-lucide="copy"></i> Copy
+            </button>
+            <button class="btn btn-sm btn-outline" onclick="viewHistoryText(${idx})" title="View full note">
+              <i data-lucide="eye"></i> View
+            </button>
+            ${linkUrl ? `
+            <a class="btn btn-sm btn-primary" href="${escapeHtml(linkUrl)}" target="_blank" rel="noopener noreferrer" title="Open Link">
+              <i data-lucide="external-link"></i> Open
+            </a>` : ''}
+          </div>
+        </div>
+        `;
+      }
+
+      // Default file item
+      return `
       <div class="history-item">
         <div class="history-file-details">
-          <i data-lucide="${getFileIcon(item.name)}"></i>
+          <i data-lucide="${getFileIcon(item.name || '')}"></i>
           <div>
-            <div class="history-file-name">${escapeHtml(item.name)}</div>
-            <div class="queue-file-size">${formatBytes(item.size)} • ${item.timestamp}</div>
+            <div class="history-file-name">${escapeHtml(item.name || 'File')}</div>
+            <div class="queue-file-size">${formatBytes(item.size || 0)} • ${item.timestamp || ''}</div>
           </div>
         </div>
         <div class="history-actions">
@@ -1204,25 +1532,40 @@ document.addEventListener('DOMContentLoaded', async () => {
           <button class="btn btn-sm btn-outline" onclick="previewHistoryFile(${idx})">
             <i data-lucide="eye"></i> Preview
           </button>
-          <a class="btn btn-sm btn-primary" href="${item.url || '#'}" download="${escapeHtml(item.name)}">
+          <a class="btn btn-sm btn-primary" href="${item.url || '#'}" download="${escapeHtml(item.name || 'download')}">
             <i data-lucide="download"></i> Download
           </a>` : '<span class="queue-file-size">Completed</span>'}
         </div>
       </div>
-    `).join('');
+      `;
+    }).join('');
 
     safeCreateIcons();
   }
 
   function saveHistoryToStorage() {
     try {
-      const serializable = historyItems.map(item => ({
-        id: item.id,
-        name: item.name,
-        size: item.size,
-        mimeType: item.mimeType,
-        timestamp: item.timestamp
-      }));
+      const serializable = historyItems.map(item => {
+        if (item.type === 'text') {
+          return {
+            id: item.id,
+            type: 'text',
+            text: item.text,
+            senderName: item.senderName,
+            recipientName: item.recipientName,
+            timestamp: item.timestamp,
+            isSent: !!item.isSent
+          };
+        }
+        return {
+          id: item.id,
+          type: 'file',
+          name: item.name,
+          size: item.size,
+          mimeType: item.mimeType,
+          timestamp: item.timestamp
+        };
+      });
       localStorage.setItem('airshare_history_v3', JSON.stringify(serializable));
     } catch (e) {}
   }
@@ -1236,6 +1579,44 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } catch (e) {}
   }
+
+  window.copyHistoryText = async (idx) => {
+    const item = historyItems[idx];
+    if (!item || !item.text) return;
+    try {
+      await navigator.clipboard.writeText(item.text);
+      showToast('Note copied to clipboard!', 'success');
+    } catch (err) {
+      const ta = document.createElement('textarea');
+      ta.value = item.text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('Note copied to clipboard!', 'success');
+    }
+  };
+
+  window.viewHistoryText = (idx) => {
+    const item = historyItems[idx];
+    if (!item || !item.text) return;
+    if (receivedTextSender) {
+      receivedTextSender.textContent = item.isSent ? `You (Sent to ${item.recipientName || 'Peers'})` : (item.senderName || 'Peer');
+    }
+    if (receivedTextTime) receivedTextTime.textContent = item.timestamp || '';
+    if (receivedTextStats) receivedTextStats.textContent = `${item.text.length} chars`;
+    if (receivedTextContent) receivedTextContent.textContent = item.text;
+
+    const urlMatch = item.text.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch && btnOpenReceivedUrl) {
+      btnOpenReceivedUrl.href = urlMatch[0];
+      btnOpenReceivedUrl.style.display = 'inline-flex';
+    } else if (btnOpenReceivedUrl) {
+      btnOpenReceivedUrl.style.display = 'none';
+    }
+
+    if (receivedTextModal) receivedTextModal.classList.add('active');
+  };
 
   window.previewHistoryFile = (idx) => {
     const item = historyItems[idx];
