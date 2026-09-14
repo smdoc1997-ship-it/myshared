@@ -157,6 +157,12 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('webrtc-reconnect-request', ({ targetSocketId }) => {
+    io.to(targetSocketId).emit('webrtc-reconnect-request', {
+      senderSocketId: socket.id
+    });
+  });
+
   // Fallback Socket.io Data Relay (Used if WebRTC P2P connection cannot be established)
   socket.on('relay-file-init', ({ targetSocketId, fileMeta }) => {
     io.to(targetSocketId).emit('relay-file-init', {

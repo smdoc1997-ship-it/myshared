@@ -12,6 +12,7 @@ class WebRTCManager {
     this.onFileReceived = options.onFileReceived || (() => {});
     this.onPeerDiscovered = options.onPeerDiscovered || (() => {});
     this.onPeerRenamed = options.onPeerRenamed || (() => {});
+    this.onPeerStateChanged = options.onPeerStateChanged || (() => {});
 
     this.peerConnections = new Map(); // targetSocketId -> RTCPeerConnection
     this.dataChannels = new Map();    // targetSocketId -> RTCDataChannel
@@ -23,17 +24,11 @@ class WebRTCManager {
     this.incomingTransfers = new Map();
     this.activeOutgoingTransfers = new Map();
 
+    // Fast, reliable STUN servers with turn fallback
     this.iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
-      { urls: 'stun:stun.services.mozilla.com:3478' },
       { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: 'stun:global.stun.twilio.com:3478' },
-      { urls: 'stun:stun.voipbuster.com:3478' },
-      { urls: 'stun:stun.voipstunt.com:3478' },
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -41,11 +36,6 @@ class WebRTCManager {
       },
       {
         urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
         username: 'openrelayproject',
         credential: 'openrelayproject'
       }
@@ -290,28 +280,41 @@ class WebRTCManager {
     this.socket.on('webrtc-ice-candidate', async ({ senderSocketId, candidate }) => {
       await this.handleIceCandidate(senderSocketId, candidate);
     });
+
+    this.socket.on('webrtc-reconnect-request', ({ senderSocketId }) => {
+      console.log(`[WebRTC] Peer ${senderSocketId} requested reconnection reset`);
+      this.removePeer(senderSocketId);
+      if (this.onPeerStateChanged) {
+        this.onPeerStateChanged(senderSocketId, 'connecting');
+      }
+    });
   }
 
   createPeerConnection(targetSocketId) {
     if (this.peerConnections.has(targetSocketId)) {
-      return this.peerConnections.get(targetSocketId);
+      const existingPc = this.peerConnections.get(targetSocketId);
+      if (existingPc.connectionState !== 'closed' && existingPc.connectionState !== 'failed') {
+        return existingPc;
+      }
+      try { existingPc.close(); } catch (e) {}
+      this.peerConnections.delete(targetSocketId);
     }
 
     const pc = new RTCPeerConnection({
-      iceServers: this.iceServers,
-      iceCandidatePoolSize: 10
+      iceServers: this.iceServers
     });
 
     pc.onicecandidate = (event) => {
-      if (this.socket) {
+      if (this.socket && event.candidate) {
         this.socket.emit('webrtc-ice-candidate', {
           targetSocketId,
-          candidate: event.candidate || null
+          candidate: event.candidate ? event.candidate.toJSON() : null
         });
       }
     };
 
     pc.ondatachannel = (event) => {
+      console.log(`[WebRTC] Inbound DataChannel received from ${targetSocketId}`);
       const channel = event.channel;
       this.setupDataChannelEvents(targetSocketId, channel);
     };
@@ -330,7 +333,10 @@ class WebRTCManager {
 
     pc.onconnectionstatechange = () => {
       console.log(`[WebRTC Connection State] ${targetSocketId}:`, pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      if (this.onPeerStateChanged) {
+        this.onPeerStateChanged(targetSocketId, pc.connectionState);
+      }
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
         this.dataChannels.delete(targetSocketId);
       }
     };
@@ -375,107 +381,146 @@ class WebRTCManager {
   }
 
   // Force reconnect P2P channel to a specific target peer
-  forceReconnectPeer(targetSocketId) {
-    if (!targetSocketId) return;
+  async forceReconnectPeer(targetSocketId) {
+    if (!targetSocketId) return null;
     console.log('[WebRTC] Forcing P2P reconnect to peer:', targetSocketId);
     this.removePeer(targetSocketId);
+
+    // Notify remote peer to also reset its RTCPeerConnection cleanly
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('webrtc-reconnect-request', { targetSocketId });
+    }
+
     return this.connectToPeer(targetSocketId);
   }
 
   async connectToPeer(targetSocketId) {
-    if (this.peerJsConns.has(targetSocketId)) {
-      return this.peerJsConns.get(targetSocketId);
-    }
+    try {
+      if (this.peerJsConns.has(targetSocketId)) {
+        return this.peerJsConns.get(targetSocketId);
+      }
 
-    if (targetSocketId.startsWith('airshare-') && this.peer) {
-      const conn = this.peer.connect(targetSocketId, { reliable: true });
-      this.setupPeerJsDataConnection(conn);
-      return new Promise((resolve) => {
-        if (conn.open) {
-          resolve(conn);
-        } else {
-          conn.on('open', () => resolve(conn));
-          conn.on('error', () => resolve(null));
-          setTimeout(() => resolve(conn.open ? conn : null), 5000);
-        }
-      });
-    }
+      if (targetSocketId.startsWith('airshare-') && this.peer) {
+        const conn = this.peer.connect(targetSocketId, { reliable: true });
+        this.setupPeerJsDataConnection(conn);
+        return new Promise((resolve) => {
+          if (conn.open) {
+            resolve(conn);
+          } else {
+            conn.on('open', () => resolve(conn));
+            conn.on('error', () => resolve(null));
+            setTimeout(() => resolve(conn.open ? conn : null), 4000);
+          }
+        });
+      }
 
-    if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') {
-      return this.dataChannels.get(targetSocketId);
-    }
+      if (this.dataChannels.has(targetSocketId) && this.dataChannels.get(targetSocketId).readyState === 'open') {
+        return this.dataChannels.get(targetSocketId);
+      }
 
-    if (!this.socket) return null;
+      if (!this.socket || !this.socket.connected) return null;
 
-    const pc = this.createPeerConnection(targetSocketId);
-    const dataChannel = pc.createDataChannel('airshare-file-transfer', { ordered: true });
+      if (this.onPeerStateChanged) this.onPeerStateChanged(targetSocketId, 'connecting');
 
-    this.setupDataChannelEvents(targetSocketId, dataChannel);
+      const pc = this.createPeerConnection(targetSocketId);
+      const dataChannel = pc.createDataChannel('airshare-file-transfer', { ordered: true });
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+      this.setupDataChannelEvents(targetSocketId, dataChannel);
 
-    this.socket.emit('webrtc-offer', { targetSocketId, offer });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        if (dataChannel.readyState !== 'open') {
+      this.socket.emit('webrtc-offer', { targetSocketId, offer });
+
+      return await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          if (dataChannel.readyState !== 'open') {
+            resolve(null);
+          }
+        }, 4000);
+
+        dataChannel.onopen = () => {
+          clearTimeout(timeout);
+          resolve(dataChannel);
+        };
+        dataChannel.onerror = () => {
+          clearTimeout(timeout);
           resolve(null);
-        }
-      }, 4000);
-
-      dataChannel.onopen = () => {
-        clearTimeout(timeout);
-        resolve(dataChannel);
-      };
-    });
+        };
+      });
+    } catch (err) {
+      console.warn(`[WebRTC] connectToPeer error with ${targetSocketId}:`, err);
+      return null;
+    }
   }
 
   async handleOffer(senderSocketId, offer) {
-    const pc = this.createPeerConnection(senderSocketId);
+    try {
+      let pc = this.peerConnections.get(senderSocketId);
 
-    // Perfect Negotiation rollback on offer collision
-    if (pc.signalingState !== 'stable') {
-      try {
-        await pc.setLocalDescription({ type: 'rollback' });
-      } catch (e) {}
-    }
+      // If existing pc is dead or closed, remove it so we can create a clean one
+      if (pc && (pc.connectionState === 'closed' || pc.connectionState === 'failed')) {
+        this.removePeer(senderSocketId);
+        pc = null;
+      }
 
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    await this.drainIceCandidateQueue(senderSocketId, pc);
+      if (!pc) {
+        pc = this.createPeerConnection(senderSocketId);
+      }
 
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+      // Perfect Negotiation rollback on offer collision
+      if (pc.signalingState !== 'stable') {
+        try {
+          await pc.setLocalDescription({ type: 'rollback' });
+        } catch (e) {
+          this.removePeer(senderSocketId);
+          pc = this.createPeerConnection(senderSocketId);
+        }
+      }
 
-    if (this.socket) {
-      this.socket.emit('webrtc-answer', {
-        targetSocketId: senderSocketId,
-        answer
-      });
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await this.drainIceCandidateQueue(senderSocketId, pc);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      if (this.socket && this.socket.connected) {
+        this.socket.emit('webrtc-answer', {
+          targetSocketId: senderSocketId,
+          answer
+        });
+      }
+    } catch (err) {
+      console.warn(`[WebRTC] handleOffer error from ${senderSocketId}:`, err);
     }
   }
 
   async handleAnswer(senderSocketId, answer) {
-    const pc = this.peerConnections.get(senderSocketId);
-    if (pc) {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      await this.drainIceCandidateQueue(senderSocketId, pc);
+    try {
+      const pc = this.peerConnections.get(senderSocketId);
+      if (pc && pc.signalingState === 'have-local-offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        await this.drainIceCandidateQueue(senderSocketId, pc);
+      }
+    } catch (err) {
+      console.warn(`[WebRTC] handleAnswer error from ${senderSocketId}:`, err);
     }
   }
 
   async handleIceCandidate(senderSocketId, candidate) {
-    const pc = this.peerConnections.get(senderSocketId);
-    if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-      try {
-        await pc.addIceCandidate(candidate ? new RTCIceCandidate(candidate) : null);
-      } catch (e) {
-        console.warn(`[ICE Candidate Error] ${senderSocketId}:`, e);
+    if (!candidate || !candidate.candidate) return;
+    try {
+      const pc = this.peerConnections.get(senderSocketId);
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        if (!this.iceCandidatesQueue.has(senderSocketId)) {
+          this.iceCandidatesQueue.set(senderSocketId, []);
+        }
+        this.iceCandidatesQueue.get(senderSocketId).push(candidate);
       }
-    } else {
-      if (!this.iceCandidatesQueue.has(senderSocketId)) {
-        this.iceCandidatesQueue.set(senderSocketId, []);
-      }
-      this.iceCandidatesQueue.get(senderSocketId).push(candidate);
+    } catch (e) {
+      console.warn(`[ICE Candidate Error] ${senderSocketId}:`, e);
     }
   }
 
@@ -484,8 +529,9 @@ class WebRTCManager {
     if (queue && queue.length > 0) {
       while (queue.length > 0) {
         const candidate = queue.shift();
+        if (!candidate || !candidate.candidate) continue;
         try {
-          await pc.addIceCandidate(candidate ? new RTCIceCandidate(candidate) : null);
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
           console.warn(`[Drain ICE Error] ${senderSocketId}:`, e);
         }
@@ -512,9 +558,12 @@ class WebRTCManager {
     };
 
     if (channel.readyState === 'open') {
+      if (this.onPeerStateChanged) this.onPeerStateChanged(targetSocketId, 'connected');
       sendHandshake();
     } else {
       channel.onopen = () => {
+        console.log(`[WebRTC] DataChannel OPEN with ${targetSocketId}`);
+        if (this.onPeerStateChanged) this.onPeerStateChanged(targetSocketId, 'connected');
         sendHandshake();
       };
     }
@@ -528,7 +577,9 @@ class WebRTCManager {
     };
 
     channel.onclose = () => {
+      console.log(`[WebRTC] DataChannel CLOSED with ${targetSocketId}`);
       this.dataChannels.delete(targetSocketId);
+      if (this.onPeerStateChanged) this.onPeerStateChanged(targetSocketId, 'disconnected');
     };
   }
 
@@ -596,11 +647,10 @@ class WebRTCManager {
         console.error('Failed to parse WebRTC text message:', err);
       }
     } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
-      const arrayBuffer = data instanceof Uint8Array ? data.buffer : data;
+      const uint8 = data instanceof Uint8Array ? data : new Uint8Array(data);
       const headerLength = 36;
-      const textDecoder = new TextDecoder();
-      const transferId = textDecoder.decode(arrayBuffer.slice(0, headerLength)).trim();
-      const chunkData = arrayBuffer.slice(headerLength);
+      const transferId = new TextDecoder().decode(uint8.subarray(0, headerLength)).trim();
+      const chunkData = uint8.subarray(headerLength);
 
       const transfer = this.incomingTransfers.get(transferId);
       if (!transfer) return;

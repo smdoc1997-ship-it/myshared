@@ -52,7 +52,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     onError: (transferId, errorMsg) => errorTransferUI(transferId, errorMsg),
     onFileReceived: (fileData) => handleReceivedFile(fileData),
     onPeerDiscovered: (peerData) => handleDiscoveredPeer(peerData),
-    onPeerRenamed: (peerData) => handlePeerRenamed(peerData)
+    onPeerRenamed: (peerData) => handlePeerRenamed(peerData),
+    onPeerStateChanged: (peerId, state) => updatePeerBadgeUI(peerId, state)
   });
 
   // DOM Element Selectors
@@ -310,29 +311,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (btnRetryConnection) {
-    btnRetryConnection.addEventListener('click', () => {
+    btnRetryConnection.addEventListener('click', async () => {
       if (!currentRoomId) {
         showToast('Join or create a room first', 'warning');
         return;
       }
-      showToast('Retrying room & P2P connection...', 'info');
 
-      if (socket && socket.connected) {
-        socket.emit('join-room', {
-          roomId: currentRoomId,
-          deviceName: deviceInfo.deviceName,
-          deviceType: deviceInfo.deviceType,
-          osName: deviceInfo.osName,
-          browserName: deviceInfo.browserName
-        });
+      const icon = btnRetryConnection.querySelector('i');
+      if (icon) icon.classList.add('spin-animation');
+      showToast('Retrying room & peer connections...', 'info');
+
+      // Reconnect socket if dropped
+      if (socket && !socket.connected) {
+        socket.connect();
+        await new Promise(r => setTimeout(r, 600));
       }
 
-      peers.forEach(peer => {
-        const targetId = peer.socketId || peer.peerId;
-        if (targetId && targetId !== selfSocketId && targetId !== webrtcManager.peerId) {
-          webrtcManager.forceReconnectPeer(targetId);
-        }
+      // Re-issue full room join
+      joinRoom(currentRoomId);
+
+      // Re-establish P2P channels for all peers in the room
+      const targetPeers = peers.filter(p => {
+        const tId = p.socketId || p.peerId;
+        return tId && tId !== selfSocketId && tId !== webrtcManager.peerId;
       });
+
+      targetPeers.forEach(peer => {
+        const targetId = peer.socketId || peer.peerId;
+        updatePeerBadgeUI(targetId, 'connecting');
+        webrtcManager.forceReconnectPeer(targetId);
+      });
+
+      setTimeout(() => {
+        if (icon) icon.classList.remove('spin-animation');
+        showToast('Connection refreshed!', 'success');
+      }, 1500);
     });
   }
 
@@ -588,7 +601,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (targetPeerId === 'all') {
           const otherPeers = peers.filter(p => {
             const id = p.peerId || p.socketId;
-            return id && id !== selfSocketId && id !== webrtcManager.peerId;
+            const isSelf = (p.deviceId && p.deviceId === deviceInfo.deviceId) || id === selfSocketId || id === webrtcManager.peerId;
+            return id && !isSelf;
           });
           if (otherPeers.length === 0) {
             alert('No other devices connected in this room! Scan QR code on your phone or open another device tab to connect.');
@@ -622,12 +636,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       channel: 'WebRTC P2P'
     });
 
-    const p2pSuccess = await webrtcManager.sendFileP2P(targetSocketId, file, transferId);
+    let p2pSuccess = false;
+    try {
+      p2pSuccess = await webrtcManager.sendFileP2P(targetSocketId, file, transferId);
+    } catch (err) {
+      console.warn('[Transfer] P2P transfer error:', err);
+      p2pSuccess = false;
+    }
 
     if (!p2pSuccess && socket && socket.connected) {
       console.log(`[Transfer] P2P fallback triggered for file ${file.name}. Using Socket.io relay stream.`);
       updateTransferChannelUI(transferId, 'Relayed Stream');
-      await sendFileViaSocketRelay(file, targetSocketId, transferId);
+      try {
+        await sendFileViaSocketRelay(file, targetSocketId, transferId);
+      } catch (relayErr) {
+        console.error('[Transfer] Relay failed:', relayErr);
+        errorTransferUI(transferId, 'Transfer failed over both P2P and Relay');
+      }
+    } else if (!p2pSuccess) {
+      errorTransferUI(transferId, 'Peer connection not ready. Click Retry.');
     }
   }
 
@@ -803,20 +830,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (selfDeviceMeta) selfDeviceMeta.textContent = `${deviceInfo.osName} • ${deviceInfo.browserName}`;
   }
 
+  function updatePeerBadgeUI(peerId, state) {
+    const badge = document.getElementById(`badge-${peerId}`);
+    if (!badge) return;
+    if (state === 'connected' || state === 'p2p') {
+      badge.className = 'badge peer-badge badge-p2p';
+      badge.textContent = 'ACTIVE • P2P DIRECT';
+    } else if (state === 'connecting' || state === 'reconnecting') {
+      badge.className = 'badge badge-connecting';
+      badge.textContent = 'CONNECTING...';
+    } else if (state === 'relay') {
+      badge.className = 'badge badge-relay';
+      badge.textContent = 'ACTIVE • RELAY READY';
+    } else if (state === 'disconnected' || state === 'failed') {
+      if (socket && socket.connected) {
+        badge.className = 'badge badge-relay';
+        badge.textContent = 'ACTIVE • RELAY READY';
+      } else {
+        badge.className = 'badge badge-offline';
+        badge.textContent = 'OFFLINE';
+      }
+    }
+  }
+
   function updatePeersUI(roomPeers) {
     if (Array.isArray(roomPeers)) {
+      const updatedPeers = [];
       roomPeers.forEach(rp => {
         const rpId = rp.peerId || rp.socketId;
-        const existingIndex = peers.findIndex(p => {
+        const existing = peers.find(p => {
           const pId = p.peerId || p.socketId;
           return (p.deviceId && rp.deviceId && p.deviceId === rp.deviceId) || (pId && pId === rpId);
         });
-        if (existingIndex >= 0) {
-          peers[existingIndex] = { ...peers[existingIndex], ...rp };
-        } else {
-          peers.push(rp);
-        }
+        updatedPeers.push({ ...(existing || {}), ...rp });
       });
+      peers = updatedPeers;
     }
 
     // Filter out self and de-duplicate peers by deviceId or composite identity key
@@ -833,7 +881,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     const otherPeers = Array.from(uniquePeersMap.values());
-    peerCount.textContent = otherPeers.length + 1;
+    if (peerCount) peerCount.textContent = otherPeers.length;
+
+    const activePeersBadge = document.getElementById('activePeersBadge');
+    if (activePeersBadge) {
+      if (otherPeers.length > 0) {
+        activePeersBadge.className = 'badge peer-badge badge-p2p';
+        activePeersBadge.textContent = `${otherPeers.length} Active Peer${otherPeers.length === 1 ? '' : 's'}`;
+      } else {
+        activePeersBadge.className = 'badge badge-relay';
+        activePeersBadge.textContent = '0 Active Peers';
+      }
+    }
 
     devicesGrid.innerHTML = '';
 
@@ -871,6 +930,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         webrtcManager.prewarmConnection(targetId);
       }
 
+      // Check real-time connection status for initial badge
+      const isP2pOpen = (webrtcManager.dataChannels.has(targetId) && webrtcManager.dataChannels.get(targetId).readyState === 'open') ||
+                        (webrtcManager.peerJsConns.has(targetId) && webrtcManager.peerJsConns.get(targetId).open);
+      const initialBadgeClass = isP2pOpen ? 'badge-p2p' : (socket && socket.connected ? 'badge-relay' : 'badge-offline');
+      const initialBadgeText = isP2pOpen ? 'ACTIVE • P2P DIRECT' : (socket && socket.connected ? 'ACTIVE • RELAY READY' : 'OFFLINE');
+
       const peerDiv = document.createElement('div');
       peerDiv.className = 'device-item';
       peerDiv.innerHTML = `
@@ -878,13 +943,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div class="device-details">
           <div class="device-name-row">
             <span class="device-name" title="${escapeHtml(peer.deviceName)}">${escapeHtml(peer.deviceName)}</span>
-            <button class="btn-icon-subtle" onclick="retryPeerConnection('${targetId}', event)" title="Retry P2P Connection to ${escapeHtml(peer.deviceName)}">
+            <button class="btn-icon-subtle" onclick="retryPeerConnection('${targetId}', event)" title="Retry Connection to ${escapeHtml(peer.deviceName)}">
               <i data-lucide="refresh-cw"></i>
             </button>
           </div>
           <div class="device-meta">${escapeHtml(peer.osName)} • ${escapeHtml(peer.browserName)}</div>
         </div>
-        <span class="badge peer-badge">CONNECTED</span>
+        <span class="badge peer-badge ${initialBadgeClass}" id="badge-${targetId}">${initialBadgeText}</span>
       `;
       peerDiv.addEventListener('click', () => {
         targetPeerSelect.value = targetId;
@@ -1070,17 +1135,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('Transfer cancelled', 'error');
   };
 
-  window.retryPeerConnection = (targetId, event) => {
+  window.retryPeerConnection = async (targetId, event) => {
     if (event) event.stopPropagation();
     const peer = peers.find(p => p.socketId === targetId || p.peerId === targetId);
     const name = peer ? peer.deviceName : 'device';
-    showToast(`Retrying P2P connection to ${name}...`, 'info');
-    webrtcManager.forceReconnectPeer(targetId);
+
+    // Animate the button icon
+    const btn = event?.currentTarget || event?.target?.closest('button');
+    const icon = btn?.querySelector('i');
+    if (icon) icon.classList.add('spin-animation');
+
+    updatePeerBadgeUI(targetId, 'connecting');
+    showToast(`Retrying connection to ${name}...`, 'info');
+
+    try {
+      const channel = await webrtcManager.forceReconnectPeer(targetId);
+      if (channel && channel.readyState === 'open') {
+        updatePeerBadgeUI(targetId, 'connected');
+        showToast(`P2P Direct connection established with ${name}!`, 'success');
+      } else if (socket && socket.connected) {
+        updatePeerBadgeUI(targetId, 'relay');
+        showToast(`Relay channel active for ${name}. Transfers ready!`, 'info');
+      } else {
+        updatePeerBadgeUI(targetId, 'disconnected');
+        showToast(`Failed to connect to ${name}`, 'error');
+      }
+    } catch (err) {
+      console.warn('Retry connection error:', err);
+      if (socket && socket.connected) {
+        updatePeerBadgeUI(targetId, 'relay');
+      }
+    } finally {
+      if (icon) icon.classList.remove('spin-animation');
+    }
   };
 
   function updateActiveCountUI() {
+    if (!activeTransfersCount) return;
     const active = transfersList.querySelectorAll('.transfer-item:not(.completed)').length;
-    activeTransfersCount.textContent = `${active} Active`;
+    activeTransfersCount.textContent = `${active} Active Transfer${active === 1 ? '' : 's'}`;
+    if (active > 0) {
+      activeTransfersCount.className = 'badge badge-p2p';
+    } else {
+      activeTransfersCount.className = 'badge';
+    }
   }
 
   function renderHistoryUI() {
@@ -1283,13 +1381,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let deviceId = localStorage.getItem('airshare_device_id');
     if (!deviceId) {
-      deviceId = `dev_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+      deviceId = `dev_${Math.random().toString(36).substring(2, 9)}`;
       localStorage.setItem('airshare_device_id', deviceId);
     }
 
+    // Unique per browser tab/session so testing across multiple tabs on the same machine works seamlessly
+    let tabSessionId = sessionStorage.getItem('airshare_tab_session_id');
+    if (!tabSessionId) {
+      tabSessionId = Math.random().toString(36).substring(2, 7);
+      sessionStorage.setItem('airshare_tab_session_id', tabSessionId);
+    }
+    const fullDeviceId = `${deviceId}_${tabSessionId}`;
+
     const customName = localStorage.getItem('airshare_device_name');
     const deviceName = customName || `${osName} ${deviceType === 'mobile' ? 'Phone' : 'Device'}`;
-    return { deviceId, deviceType, osName, browserName, deviceName };
+    return { deviceId: fullDeviceId, baseDeviceId: deviceId, tabSessionId, deviceType, osName, browserName, deviceName };
   }
 
   function getDeviceIcon(type) {

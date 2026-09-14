@@ -23,6 +23,7 @@
     "ip": "^2.0.1",
     "isomorphic-git": "^1.41.9",
     "qrcode": "^1.5.3",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.8.3"
   }
 }

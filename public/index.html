@@ -96,7 +96,8 @@
         <div class="card-header">
           <div class="header-title">
             <i data-lucide="monitor"></i>
-            <h2>Connected Devices (<span id="peerCount">1</span>)</h2>
+            <h2>Connected Devices (<span id="peerCount">0</span>)</h2>
+            <span class="badge badge-relay" id="activePeersBadge">0 Active Peers</span>
           </div>
           <span class="hint-text">Select target device or send to all devices in room</span>
         </div>
@@ -167,7 +168,7 @@
             <h2>Live File Transfers</h2>
           </div>
           <div class="transfer-stats-header">
-            <span id="activeTransfersCount">0 Active</span>
+            <span class="badge" id="activeTransfersCount">0 Active Transfers</span>
           </div>
         </div>
         <div class="transfers-list" id="transfersList">
